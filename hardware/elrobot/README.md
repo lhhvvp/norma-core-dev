@@ -12,6 +12,8 @@
 
 🎥 **[Watch the Introduction Video →](https://youtu.be/WXRG1KnzKv4)**
 
+🎮 **[Try the Web Playground →](https://normacore.dev/elrobot-urdf/)**
+
 A highly affordable, fully 3D-printed robotic arm for physical AI research and imitation learning.
 
 ## ✨ Why ElRobot?
