@@ -234,6 +234,10 @@ make build
 
 # Cross-compile for Linux ARM64 (e.g., Raspberry Pi)
 cargo zigbuild --target aarch64-unknown-linux-gnu --release -p station
+
+# Cross-compile for Linux AMD64 (on macOS, requires NASM)
+brew install nasm  # Required for turbojpeg on macOS
+cargo zigbuild --target x86_64-unknown-linux-gnu --release -p station
 ```
 
 ## 📖 License
