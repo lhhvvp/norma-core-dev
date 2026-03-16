@@ -46,7 +46,7 @@ Open your browser at **http://localhost:8889** to see the web interface.
 |  | TypeScript | 📋 Planned |
 | **Robotics Frameworks** | ROS | 📋 Planned |
 
-**Want support for your robot?** [Open an issue](https://github.com/norma-core/norma-core/issues) with your device details!
+**Want integration for your robot?** [Open an issue](https://github.com/norma-core/norma-core/issues) with your device details!
 
 ## 📖 Usage
 
@@ -141,7 +141,7 @@ cloud-offload:
 ## 📊 Data Storage
 
 All data is stored in NormFS queues under `station-data/{unique-id}`.
-Store data is:
+The stored data is:
 - 🔒 **Encrypted** - AES-256 encryption
 - 🗜️ **Compressed** - LZ4 compression
 - ☁️ **Cloud-synced** - Optional automatic S3 upload (encrypted data only)
@@ -161,17 +161,11 @@ See [station-viewer](../../clients/station-viewer) for details.
 ## 🔧 Building
 
 ```bash
-# Build web client first
-cd software/station/clients/station-viewer
-yarn install
-yarn build
-cd -
-
-# Build release binary
-cargo build --release -p station
+# Building for host OS/arch
+make build
 
 # Binary location
-./target/release/station
+{REPO_ROOT}/target/release/station
 
 # Cross-compile for Linux ARM64 (e.g., Raspberry Pi)
 cargo zigbuild --target aarch64-unknown-linux-gnu --release -p station

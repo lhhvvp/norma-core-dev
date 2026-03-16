@@ -13,11 +13,14 @@ CARGO_FLAGS := --release --package=$(PACKAGE)
 
 .PHONY: all build client build-arm64 build-amd64 clean help
 
-# Default target - build both architectures
 all: build
 
-# Build both architectures
-build: client build-arm64 build-amd64
+build: client
+	@echo "Building station..."
+	cargo build $(CARGO_FLAGS)
+	@echo "=========================================================================================================="
+	@echo "Binary built at: "
+	@realpath ../../../../target/release/$(BINARY_NAME)
 
 # Build the station binary for ARM64 Linux
 build-arm64: client
