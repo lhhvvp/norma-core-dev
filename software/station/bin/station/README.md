@@ -209,14 +209,6 @@ cloud-offload:
   endpoint: "https://s3.amazonaws.com"  # Optional for MinIO/R2, leave empty to use env: AWS_ENDPOINT_URL
 ```
 
-## 📊 Data Storage
-
-All data is stored in NormFS queues under `station-data/{unique-id}`.
-The stored data is:
-- 🔒 **Encrypted** - AES-256 encryption
-- 🗜️ **Compressed** - LZ4 compression
-- ☁️ **Cloud-synced** - Optional automatic S3 upload (encrypted data only)
-
 ## 🌐 Web Interface
 
 Access the web interface at `http://localhost:8889` (when `--web` is enabled):
