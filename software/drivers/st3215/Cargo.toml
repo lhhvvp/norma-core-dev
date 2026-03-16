@@ -1,0 +1,31 @@
+[package]
+name = "st3215"
+version.workspace = true
+edition = "2021"
+authors = ["Alex Batsuev <ab@elrobot.eu>"]
+description = "ST3215 servo motor control library and CLI tool"
+repository = "https://github.com/nova-robotics-eu/norma_core/tree/master/software/drivers/st3215"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["servo", "motor", "robotics", "st3215", "serial"]
+categories = ["hardware-support", "command-line-utilities"]
+
+[features]
+default = []
+
+[dependencies]
+tokio = { workspace = true }
+normfs = { workspace = true }
+systime = { path = "../../station/shared/systime-rs" }
+station_iface = { path = "../../station/shared/station-iface" }
+prost = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+tokio-serial = "5.4.5"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+prost-build = { workspace = true }

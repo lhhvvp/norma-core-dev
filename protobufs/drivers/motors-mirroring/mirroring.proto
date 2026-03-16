@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package motors_mirroring;
+
+enum BusType {
+    MBT_ST3215 = 0;
+}
+
+enum BusMode {
+    BR_UNKNOWN  = 0;
+    BR_LEADER   = 1;
+    BR_FOLLOWER = 2;
+}
+
+message MirroringBus {
+    BusType type      = 1;
+    string  unique_id = 2;
+}
+
+message ModeEnvelope {
+    uint64 monotonic_stamp_ns = 1;
+    uint64 local_stamp_ns     = 2;
+    uint64 app_start_id       = 3;
+
+    MirroringBus bus  = 4;
+    BusMode      mode = 5;
+}
+
+enum CommandType {
+    CT_START_MIRROR = 0;
+    CT_STOP_MIRROR  = 1;
+}
+
+message Command {
+    CommandType  type   = 1;
+    MirroringBus source = 2;
+    
+    repeated MirroringBus targets = 10;
+}
+
+message TxEnvelope {
+    uint64 monotonic_stamp_ns = 1;
+    uint64 local_stamp_ns     = 2;
+    uint64 app_start_id       = 3;
+
+    Command command = 10;
+}
+
+message RxEnvelope {
+    uint64 monotonic_stamp_ns = 1;
+    uint64 local_stamp_ns     = 2;
+    uint64 app_start_id       = 3;
+
+    InferenceState state   = 10;
+    Command        command = 11;
+}
+
+message InferenceState {
+    message Bus {
+        MirroringBus id   = 1;
+        BusMode      mode = 2;
+    }
+
+    message Mirroring {
+        Bus source = 1;
+
+        repeated Bus targets = 10;
+    }
+
+    repeated Bus       modes     = 10;
+    repeated Mirroring mirroring = 11;
+}

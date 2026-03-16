@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package drivers;
+
+enum QueueDataType {
+    QDT_SYSTEM = 0;           // queues/system.proto
+    QDT_STATION_COMMANDS = 1; // commands Command
+    
+    QDT_ST3215_SERIAL_TX    = 10; // commands
+    QDT_ST3215_SERIAL_RX    = 11; // states
+    QDT_ST3215_META         = 12; // meta
+    QDT_ST3215_INFERENCE    = 13; // inference state
+    
+    QDT_FFMPEG_VIDEO_STREAM_RX = 20; // FFMPEGQueueHeader
+    QDT_USB_VIDEO_FRAMES       = 21;
+    QDT_INFERENCE_FRAMES       = 22; // inference frames (normvla, etc)
+
+    QDT_MOTOR_MIRRORING_MODES = 30;
+    QDT_MOTOR_MIRRORING_RX    = 32;
+}
+
+enum StationCommandType {
+    STC_ST3215_COMMAND          = 0; // st3215.Command
+    STC_MOTOR_MIRRORING_COMMAND = 1; // motors_mirroring.Command
+}

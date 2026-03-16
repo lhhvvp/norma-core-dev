@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package commands;
+
+import "drivers.proto";
+
+message DriverCommand {
+    bytes command_id = 1;
+
+    drivers.StationCommandType type = 2;
+    bytes                      body = 3;
+}
+
+message StationCommandsPack {
+    bytes inference_state_id = 1;
+    bytes pack_id            = 2;
+
+    repeated DriverCommand commands = 10;
+    repeated string tags = 20;
+}

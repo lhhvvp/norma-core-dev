@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package station;
+
+import "opts.proto";
+import "drivers.proto";
+
+enum RootQueueEnvelopeType {
+    RQET_APP_START   = 0;
+    RQET_QUEUE_START = 1;
+    RQET_QUEUE_STOP  = 2;
+}
+
+message QueueData {
+    string                id        = 1;
+    drivers.QueueDataType data_type = 2;
+
+    repeated QueueOpt opts = 10;
+}
+
+enum QueueOptType {
+    QOT_UNKNOWN = 0;
+}
+
+message QueueOpt {
+    QueueOptType  type  = 1;
+    opts.OptValue value = 2;
+}
+
+message RootQueueEnvelope {
+    RootQueueEnvelopeType type = 1;
+
+    uint64 monotonic_stamp_ns  = 2;
+    uint64 local_stamp_ns      = 3;
+    uint64 app_start_id        = 4;
+
+    bytes station_uuid = 10;
+
+    QueueData queue = 20;
+}

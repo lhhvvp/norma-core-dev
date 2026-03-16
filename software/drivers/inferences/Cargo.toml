@@ -1,0 +1,23 @@
+[package]
+name = "inferences"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+normfs = { workspace = true }
+station_iface = { path = "../../station/shared/station-iface" }
+st3215 = { path = "../st3215" }
+usbvideo = { path = "../usbvideo" }
+prost = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+lazy_static = { workspace = true }
+memmap2 = "0.9"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+prost-build = { workspace = true }

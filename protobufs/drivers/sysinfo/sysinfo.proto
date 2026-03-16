@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package sysinfo;
+
+message Envelope {
+    uint64 monotonic_stamp_ns = 1;
+    uint64 local_stamp_ns     = 2;
+    uint64 app_start_id       = 3;
+
+    EnvelopeData data = 10;
+}
+
+message InferenceStatePtr {
+    repeated bytes rx_ptrs = 10;
+}
+
+message EnvelopeData {
+    OsInfo      os          = 1;
+    TimeInfo    time        = 2;
+    Memory      memory      = 3;
+    Motherboard motherboard = 4;
+    string      hostname    = 5;
+    string      cpu_arch    = 6;
+    uint64      physical_core_count = 7;
+    string      name                = 8;
+    string      unique_id           = 9;
+    
+    repeated User    users    = 10;
+    repeated CPU     cpu      = 11;
+    repeated Disk    disks    = 12;
+    repeated Network networks = 13;
+    
+    repeated TemperatureSensor temperatures = 20;
+}
+
+message OsInfo {
+    string name           = 1;
+    string release        = 2;
+    string kernel_version = 3;
+}
+
+message TimeInfo {
+    int64 utc_offset_seconds = 1;
+}
+
+message Memory {
+    uint64 total_bytes = 1;
+    uint64 used_bytes  = 2;
+
+    uint64 total_swap_bytes = 3;
+    uint64 used_swap_bytes  = 4;
+}
+
+message CPU {
+    string name      = 1;
+    string vendor_id = 2;
+    string brand     = 3;
+    uint64 frequency = 4;
+
+    float  usage = 10;
+}
+
+message Disk {
+    string kind        = 1;
+    string fs          = 2;
+    string name        = 3;
+    string mount_point = 4;
+    bool   removable   = 5;
+    bool   read_only   = 6;
+
+    uint64 total_space_bytes     = 10;
+    uint64 available_space_bytes = 11;
+
+    uint64 total_read_bytes    = 20;
+    uint64 total_written_bytes = 21;
+}
+
+message Motherboard {
+    string name          = 1;
+    string vendor_name   = 2;
+    string version       = 3;
+    string serial_number = 4;
+    string asset_tag     = 5;
+}
+
+message User {
+    string name = 1;
+
+    repeated string groups = 10;
+}
+
+message NetworkIp {
+    string addr   = 1;
+}
+
+message Network {
+    string iface = 1;
+    string mac_address = 2;
+
+    repeated NetworkIp ips = 10;
+    
+    uint64 bytes_received      = 20;
+    uint64 bytes_transmitted   = 21;
+    uint64 packets_received    = 22;
+    uint64 packets_transmitted = 23;
+    uint64 errors_received     = 24;
+    uint64 errors_transmitted  = 25;
+}
+
+message TemperatureSensor {
+    string id    = 1;
+    string name  = 2;
+    float  value = 3;
+    
+    float  max      = 10;
+    float  critical = 11;
+}

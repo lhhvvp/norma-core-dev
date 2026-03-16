@@ -1,0 +1,16 @@
+drivers:
+  st3215:
+    enabled: true
+    current-threshold: 100
+    deadband: 20
+  system-info: true
+  usb-video:
+    enabled: true
+    resize_target: 224
+inference:
+- queue-id: inference/normvla
+  shm: /tmp/normvla
+  shm-size-mb: 12
+  format: normvla
+  st3215-bus: auto
+  update-interval: 100ms

@@ -1,0 +1,33 @@
+[package]
+name = "station"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+prost = { workspace = true }
+normfs = { workspace = true, features = ["websocket"] }
+normfs-types = "0.1.0-beta.0"
+clap = { version = "4.5", features = ["derive"] }
+tokio = { workspace = true }
+station_iface = { path = "../../shared/station-iface" }
+st3215 = { path = "../../../drivers/st3215" }
+systime = { path = "../../shared/systime-rs" }
+usbvideo = { path = "../../../drivers/usbvideo" }
+sysinfod = { path = "../../../drivers/sysinfod" }
+motors-mirroring = { path = "../../../drivers/motors-mirroring" }
+inferences = { path = "../../../drivers/inferences" }
+log = { workspace = true }
+env_logger = "0.10"
+bytes = { workspace = true }
+anyhow = "1.0"
+fastwebsockets = { version = "0.10.0", features = ["upgrade"] }
+hyper = { version = "1.7.0", features = ["http1", "server"] }
+hyper-util = { version = "0.1.6", features = ["full"] }
+http-body-util = "0.1"
+rust-embed = "8.9.0"
+mime_guess = "2.0.5"
+parking_lot = { workspace = true }
+dashmap = "6.1"
+
+[build-dependencies]
+prost-build = { workspace = true }

@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package normvla;
+
+message Frame {
+  bytes  global_frame_id    = 1;
+  uint64 monotonic_stamp_ns = 2;
+
+  repeated Joint joints = 10;
+  repeated Image images = 11;
+}
+
+message Joint {
+  uint32 range_min          = 1;
+  uint32 range_max          = 2;
+  uint32 position           = 3;
+  float  position_norm      = 4;
+  uint32 goal               = 5;
+  float  goal_norm          = 6;
+  uint32 current_ma         = 7;
+  uint32 velocity           = 8;
+  uint64 monotonic_stamp_ns = 9;
+}
+
+message Image {
+  bytes  jpeg               = 1; // 224x224
+  uint64 monotonic_stamp_ns = 2;
+}

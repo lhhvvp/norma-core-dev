@@ -1,0 +1,586 @@
+import React, { useRef, useState } from 'react';
+import {st3215} from '../api/proto';
+import { getMotorPosition, getMotorCurrent } from './motor-parser';
+import { serverToLocal } from '../api/timestamp-utils';
+import Long from 'long';
+import { commandManager } from '../api/commands';
+
+interface LatencyReading {
+  timestamp: number;
+  latency: number;
+}
+
+interface LatencyStats {
+  avg: number;
+  min: number;
+  max: number;
+}
+
+interface MotorDataTableProps {
+  bus: st3215.InferenceState.IBusState;
+  busIndex: number;
+  isWebControlled?: boolean;
+}
+
+interface MotorControlState {
+  isDragging: boolean;
+  targetPosition: number | null;
+  originalPosition: number | null;
+}
+
+const MotorDataTable: React.FC<MotorDataTableProps> = ({ bus, busIndex, isWebControlled = false }) => {
+  if (!bus.motors?.length) {
+    return null;
+  }
+
+  const now = Date.now();
+  const latencyHistoryRef = useRef<Map<string, LatencyReading[]>>(new Map());
+  const [motorControlStates, setMotorControlStates] = useState<Map<number, MotorControlState>>(new Map());
+  const [hoveredMotor, setHoveredMotor] = useState<number | null>(null);
+  const buttonIntervalRef = useRef<{ [key: string]: NodeJS.Timeout | null }>({});
+
+  // Function to calculate moving average for latency (15 second window)
+  const getMovingAverageLatency = (key: string, currentLatency: number): LatencyStats => {
+    // Clamp to prevent negative values
+    const validLatency = Math.max(0, currentLatency);
+    
+    const history = latencyHistoryRef.current.get(key) || [];
+    
+    // Add current reading
+    history.push({ timestamp: now, latency: validLatency });
+    
+    // Filter to keep only last 15 seconds
+    const filtered = history.filter(h => now - h.timestamp <= 15000);
+    latencyHistoryRef.current.set(key, filtered);
+    
+    // Calculate statistics
+    if (filtered.length === 0) {
+      return { avg: validLatency, min: validLatency, max: validLatency };
+    }
+    
+    const latencies = filtered.map(h => h.latency);
+    const sum = latencies.reduce((acc, l) => acc + l, 0);
+    
+    return {
+      avg: sum / filtered.length,
+      min: Math.min(...latencies),
+      max: Math.max(...latencies)
+    };
+  };
+
+  const calculatePercentage = (position: number, min: number, max: number) => {
+    const MAX_ANGLE_STEP = 4095;
+    if (min > max) { // Counter-arc
+      const totalRange = (MAX_ANGLE_STEP - min) + max;
+      if (totalRange === 0) return 0;
+      if (position >= min) {
+        return ((position - min) / totalRange) * 100;
+      } else {
+        return ((MAX_ANGLE_STEP - min + position) / totalRange) * 100;
+      }
+    }
+    if (max === min) return 0;
+    return ((position - min) / (max - min)) * 100;
+  };
+
+  const getStatusColor = (latency: number, hasError: boolean) => {
+    if (hasError) return "text-red-500";
+    if (latency < 100) return "text-green-500";
+    if (latency < 500) return "text-yellow-500";
+    if (latency < 1000) return "text-orange-500";
+    return "text-red-500";
+  };
+
+  const getLatencyColor = (latency: number) => {
+    if (latency < 100) return "text-green-400";
+    if (latency < 500) return "text-yellow-400";
+    if (latency < 1000) return "text-orange-400";
+    return "text-red-400";
+  };
+
+  const getCurrentColor = (current: number) => {
+    if (current === 0) return "text-gray-500";
+    if (current < 100) return "text-green-400";
+    if (current < 200) return "text-yellow-400";
+    if (current < 300) return "text-orange-400";
+    return "text-red-400";
+  };
+
+  const getStatusText = (latency: number, hasError: boolean) => {
+    if (hasError) return "ERROR";
+    if (latency > 500) return "STALE";
+    return "OK";
+  };
+
+  const getStatusTextColor = (latency: number, hasError: boolean) => {
+    if (hasError) return "text-red-400";
+    if (latency > 500) return "text-yellow-400";
+    return "text-green-400";
+  };
+
+  const getGradientClass = (percentage: number) => {
+    if (percentage < 33) return "bg-gradient-to-r from-blue-600 to-blue-400";
+    if (percentage < 66) return "bg-gradient-to-r from-green-600 to-green-400";
+    return "bg-gradient-to-r from-yellow-600 to-yellow-400";
+  };
+
+  const handleMouseDown = (motor: st3215.InferenceState.IMotorState, event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isWebControlled || !motor.id) return;
+    event.preventDefault();
+    
+    const position = motor.state ? getMotorPosition(motor.state) : 0;
+    setMotorControlStates(prev => {
+      const newMap = new Map(prev);
+      newMap.set(motor.id!, {
+        isDragging: true,
+        targetPosition: position,
+        originalPosition: position
+      });
+      return newMap;
+    });
+  };
+
+    const moveMotorToPosition = async (motorId: number, targetPosition: number) => {
+        if (!bus.bus?.serialNumber) return;
+
+        const command = st3215.Command.create({
+            targetBusSerial: bus.bus.serialNumber,
+            write: {
+                motorId: motorId,
+                address: 0x2A,
+                value: new Uint8Array([targetPosition & 0xFF, (targetPosition >> 8) & 0xFF]),
+            }
+        });
+
+        // Send command to move motor
+        await commandManager.sendSt3215Command(command);
+    };
+
+  const handleMouseMove = (motor: st3215.InferenceState.IMotorState, event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isWebControlled || !motor.id) return;
+    
+    const controlState = motorControlStates.get(motor.id);
+    if (!controlState?.isDragging) return;
+    
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    // Add padding to make edge positions easier to reach
+    const paddingPercent = 2; // 2% padding on each side
+    const effectiveWidth = rect.width * (1 - 2 * paddingPercent / 100);
+    const effectiveX = x - rect.width * paddingPercent / 100;
+    const percentage = Math.max(0, Math.min(100, (effectiveX / effectiveWidth) * 100));
+    
+    // Calculate the target position based on percentage and range
+    const rangeMin = motor.rangeMin || 0;
+    const rangeMax = motor.rangeMax || 4095;
+    const MAX_ANGLE_STEP = 4095;
+    
+    let targetPosition: number;
+    if (rangeMin > rangeMax) { // Counter-arc
+      const totalRange = (MAX_ANGLE_STEP - rangeMin) + rangeMax;
+      const offset = (percentage / 100) * totalRange;
+      if (offset <= (MAX_ANGLE_STEP - rangeMin)) {
+        targetPosition = Math.round(rangeMin + offset);
+      } else {
+        targetPosition = Math.round(offset - (MAX_ANGLE_STEP - rangeMin));
+      }
+    } else {
+      targetPosition = Math.round(rangeMin + (percentage / 100) * (rangeMax - rangeMin));
+    }
+
+    // Update the state and send command immediately
+    setMotorControlStates(prev => {
+      const newMap = new Map(prev);
+      const state = newMap.get(motor.id!);
+      if (state) {
+        state.targetPosition = targetPosition;
+      }
+      return newMap;
+    });
+    
+    // Send command immediately for real-time control
+    moveMotorToPosition(motor.id, targetPosition);
+  };
+
+  const handleMouseUp = (motor: st3215.InferenceState.IMotorState) => {
+    if (!motor.id) return;
+    
+    // Just clear the control state since we're sending commands in real-time
+    setMotorControlStates(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(motor.id!);
+      return newMap;
+    });
+  };
+
+  const handleMouseLeave = (_motorId: number) => {
+    setHoveredMotor(null);
+    // Don't cancel drag when leaving the control area - let global handlers manage it
+  };
+
+  const handleButtonMouseDown = (motor: st3215.InferenceState.IMotorState, increment: boolean) => {
+    if (!isWebControlled || !motor.id) return;
+    
+    const buttonKey = `${motor.id}-${increment ? 'inc' : 'dec'}`;
+    
+    // Get initial position
+    let currentPosition = motor.state ? getMotorPosition(motor.state) : 0;
+    const rangeMin = motor.rangeMin || 0;
+    const rangeMax = motor.rangeMax || 4095;
+    const MAX_ANGLE_STEP = 4095;
+    
+    // Calculate step size (1% of range)
+    let stepSize: number;
+    if (rangeMin > rangeMax) { // Counter-arc
+      const totalRange = (MAX_ANGLE_STEP - rangeMin) + rangeMax;
+      stepSize = Math.max(1, Math.round(totalRange * 0.01));
+    } else {
+      stepSize = Math.max(1, Math.round((rangeMax - rangeMin) * 0.01));
+    }
+    
+    // Helper function to calculate next position
+    const getNextPosition = (pos: number) => {
+      let newPosition: number;
+      if (increment) {
+        if (rangeMin > rangeMax) { // Counter-arc
+          if (pos >= rangeMin || pos < rangeMax) {
+            newPosition = pos + stepSize;
+            if (pos >= rangeMin && newPosition > MAX_ANGLE_STEP) {
+              newPosition = newPosition - MAX_ANGLE_STEP - 1;
+            }
+            if (newPosition > rangeMax && newPosition < rangeMin) {
+              newPosition = rangeMax;
+            }
+          } else {
+            newPosition = pos;
+          }
+        } else {
+          newPosition = Math.min(rangeMax, pos + stepSize);
+        }
+      } else {
+        if (rangeMin > rangeMax) { // Counter-arc
+          if (pos >= rangeMin || pos <= rangeMax) {
+            newPosition = pos - stepSize;
+            if (pos <= rangeMax && newPosition < 0) {
+              newPosition = MAX_ANGLE_STEP + newPosition + 1;
+            }
+            if (newPosition < rangeMin && newPosition > rangeMax) {
+              newPosition = rangeMin;
+            }
+          } else {
+            newPosition = pos;
+          }
+        } else {
+          newPosition = Math.max(rangeMin, pos - stepSize);
+        }
+      }
+      return newPosition;
+    };
+    
+    // Send first command immediately
+    currentPosition = getNextPosition(currentPosition);
+    moveMotorToPosition(motor.id, currentPosition);
+    
+    // Set up interval for continuous sending
+    buttonIntervalRef.current[buttonKey] = setInterval(() => {
+      // Calculate next position based on tracked position
+      currentPosition = getNextPosition(currentPosition);
+      moveMotorToPosition(motor.id!, currentPosition);
+    }, 100); // Send command every 100ms while button is held
+  };
+
+  const handleButtonMouseUp = (motor: st3215.InferenceState.IMotorState, increment: boolean) => {
+    if (!motor.id) return;
+    
+    const buttonKey = `${motor.id}-${increment ? 'inc' : 'dec'}`;
+    
+    // Clear the interval
+    if (buttonIntervalRef.current[buttonKey]) {
+      clearInterval(buttonIntervalRef.current[buttonKey]!);
+      buttonIntervalRef.current[buttonKey] = null;
+    }
+  };
+
+  // Add global mouse event listeners for drag handling
+  React.useEffect(() => {
+    const handleGlobalMouseMove = (event: MouseEvent) => {
+      // Check if any motor is being dragged
+      motorControlStates.forEach((state, motorId) => {
+        if (!state.isDragging) return;
+        
+        // Find the motor data
+        const motor = bus.motors?.find(m => m.id === motorId);
+        if (!motor) return;
+        
+        // Find the control element for this motor
+        const controlElement = document.querySelector(`[data-motor-control="${motorId}"]`);
+        if (!controlElement) return;
+        
+        const rect = controlElement.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        
+        // Add padding to make edge positions easier to reach
+        const paddingPercent = 2; // 2% padding on each side
+        const effectiveWidth = rect.width * (1 - 2 * paddingPercent / 100);
+        const effectiveX = x - rect.width * paddingPercent / 100;
+        const percentage = Math.max(0, Math.min(100, (effectiveX / effectiveWidth) * 100));
+        
+        // Calculate the target position based on percentage and range
+        const rangeMin = motor.rangeMin || 0;
+        const rangeMax = motor.rangeMax || 4095;
+        const MAX_ANGLE_STEP = 4095;
+        
+        let targetPosition: number;
+        if (rangeMin > rangeMax) { // Counter-arc
+          const totalRange = (MAX_ANGLE_STEP - rangeMin) + rangeMax;
+          const offset = (percentage / 100) * totalRange;
+          if (offset <= (MAX_ANGLE_STEP - rangeMin)) {
+            targetPosition = Math.round(rangeMin + offset);
+          } else {
+            targetPosition = Math.round(offset - (MAX_ANGLE_STEP - rangeMin));
+          }
+        } else {
+          targetPosition = Math.round(rangeMin + (percentage / 100) * (rangeMax - rangeMin));
+        }
+
+        // Update the state and send command immediately
+        setMotorControlStates(prev => {
+          const newMap = new Map(prev);
+          const state = newMap.get(motorId);
+          if (state) {
+            state.targetPosition = targetPosition;
+          }
+          return newMap;
+        });
+        
+        // Send command immediately for real-time control
+        moveMotorToPosition(motorId, targetPosition);
+      });
+    };
+
+    const handleGlobalMouseUp = () => {
+      setMotorControlStates(prev => {
+        const newMap = new Map();
+        prev.forEach((state, id) => {
+          if (!state.isDragging) {
+            newMap.set(id, state);
+          }
+        });
+        return newMap;
+      });
+      
+      // Also clear all button intervals
+      Object.keys(buttonIntervalRef.current).forEach(key => {
+        if (buttonIntervalRef.current[key]) {
+          clearInterval(buttonIntervalRef.current[key]!);
+          buttonIntervalRef.current[key] = null;
+        }
+      });
+    };
+    
+    document.addEventListener('mousemove', handleGlobalMouseMove);
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+      // Clean up any remaining intervals
+      Object.keys(buttonIntervalRef.current).forEach(key => {
+        if (buttonIntervalRef.current[key]) {
+          clearInterval(buttonIntervalRef.current[key]!);
+        }
+      });
+    };
+  }, [motorControlStates, bus.motors]);
+
+  return (
+    <div className="absolute bottom-2 left-2 bg-gray-950/80 backdrop-blur-sm rounded-lg overflow-hidden border border-gray-700/50 max-w-[calc(100%-1rem)]">
+      <div className="overflow-x-auto">
+        <table className="text-xs text-gray-400 min-w-full">
+        <thead className="bg-gray-800/80 text-gray-400 font-bold sticky top-0">
+          <tr>
+            <th className="px-2 py-1 text-left">ID</th>
+            <th className="px-2 py-1 text-right">POS</th>
+            <th className="px-2 py-1 text-right">CURR</th>
+            <th className="px-2 py-1 text-center" colSpan={3}>RANGE</th>
+            <th className="px-2 py-1 text-right">%</th>
+            <th className="px-2 py-1 text-right">LAG</th>
+            <th className="px-2 py-1 text-right">MAX</th>
+            <th className="px-2 py-1 text-left" colSpan={2}>STATUS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...(bus.motors || [])].sort((a, b) => (a.id || 0) - (b.id || 0)).map((motor, motorIndex) => {
+            const controlState = motor.id ? motorControlStates.get(motor.id) : undefined;
+            const position = motor.state ? getMotorPosition(motor.state) : 0;
+            const current = motor.state ? getMotorCurrent(motor.state) : 0;
+            const percentage = calculatePercentage(position, motor.rangeMin || 0, motor.rangeMax || 0);
+            const adjustedMotorStamp = motor.monotonicStampNs ? serverToLocal(Long.fromValue(motor.monotonicStampNs)) : null;
+            const latency = adjustedMotorStamp ? (now - (adjustedMotorStamp.toNumber() / 1e6)) : 0;
+            const latencyAvg = getMovingAverageLatency(`bus-${busIndex}-motor-${motorIndex}`, latency);
+            const hasError = !!motor.error;
+
+            return (
+              <tr key={motorIndex} className={`hover:bg-gray-900/50 transition-colors border-b border-gray-800/50 ${hasError ? 'bg-red-900/20' : ''}`}>
+                {/* Motor ID */}
+                <td className={`px-2 py-1.5 font-bold ${getStatusColor(latency, hasError)}`}>
+                  M{motor.id?.toString()}
+                </td>
+                
+                {/* Position */}
+                <td className="px-2 py-1.5 text-green-400 tabular-nums text-right">{position}</td>
+                
+                {/* Current */}
+                <td className={`px-2 py-1.5 ${getCurrentColor(current)} tabular-nums text-right`}>{current}</td>
+                
+                {/* Range Min */}
+                <td className="px-2 py-1.5 text-gray-500 tabular-nums text-right">
+                  {motor.rangeMin?.toString().padStart(4, '0') || '0000'}
+                </td>
+                
+                {/* Range Progress Bar */}
+                <td className="px-2 py-1.5" style={{ minWidth: '200px' }}>
+                  <div className="relative flex items-center gap-1">
+                    {/* Decrement button */}
+                    {isWebControlled && (
+                      <button
+                        className="w-6 h-6 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 rounded text-white text-xs font-bold transition-colors"
+                        onMouseDown={() => handleButtonMouseDown(motor, false)}
+                        onMouseUp={() => handleButtonMouseUp(motor, false)}
+                        onMouseLeave={() => handleButtonMouseUp(motor, false)}
+                        title="Decrease by 1% (hold for continuous)"
+                      >
+                        -
+                      </button>
+                    )}
+                    <div 
+                      className={`bg-gray-800 rounded-full overflow-hidden relative flex-1 ${
+                        isWebControlled ? 'cursor-move hover:bg-gray-700 h-5' : 'h-3'
+                      } ${controlState?.isDragging ? 'ring-2 ring-blue-500' : ''}`}
+                      data-motor-control={motor.id}
+                      onMouseDown={(e) => handleMouseDown(motor, e)}
+                      onMouseMove={(e) => handleMouseMove(motor, e)}
+                      onMouseUp={() => handleMouseUp(motor)}
+                      onMouseEnter={() => setHoveredMotor(motor.id || null)}
+                      onMouseLeave={() => handleMouseLeave(motor.id || 0)}
+                    >
+                      {/* Current position bar */}
+                      <div 
+                        className={`h-full transition-all ${controlState?.isDragging ? 'duration-0' : 'duration-200'} ${getGradientClass(percentage)} ${
+                          controlState?.isDragging ? 'opacity-50' : ''
+                        }`}
+                        style={{ width: `${percentage}%`, pointerEvents: 'none' }}
+                      />
+                      
+                      {/* Target position preview (when dragging) */}
+                      {controlState?.isDragging && controlState.targetPosition !== null && (
+                        <div 
+                          className="absolute top-0 h-full bg-blue-500 opacity-70"
+                          style={{ 
+                            width: `${calculatePercentage(controlState.targetPosition, motor.rangeMin || 0, motor.rangeMax || 0)}%`,
+                            pointerEvents: 'none'
+                          }}
+                        />
+                      )}
+                      
+                      {/* Current position indicator */}
+                      <div 
+                        className="absolute top-0 h-full w-0.5 bg-white shadow-sm"
+                        style={{ left: `${percentage}%`, pointerEvents: 'none' }}
+                      />
+                      
+                      {/* Target position indicator (when dragging) */}
+                      {controlState?.isDragging && controlState.targetPosition !== null && (
+                        <div 
+                          className="absolute top-0 h-full w-1 bg-blue-400 shadow-lg"
+                          style={{ 
+                            left: `${calculatePercentage(controlState.targetPosition, motor.rangeMin || 0, motor.rangeMax || 0)}%`,
+                            pointerEvents: 'none'
+                          }}
+                        />
+                      )}
+                    </div>
+                    
+                    {/* Hover tooltip */}
+                    {isWebControlled && hoveredMotor === motor.id && !controlState?.isDragging && (
+                      <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                        Drag to move
+                      </div>
+                    )}
+                    
+                    {/* Dragging percentage display */}
+                    {controlState?.isDragging && controlState.targetPosition !== null && (
+                      <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white text-xs px-2 py-1 rounded font-bold z-10">
+                        {calculatePercentage(controlState.targetPosition, motor.rangeMin || 0, motor.rangeMax || 0).toFixed(1)}%
+                      </div>
+                    )}
+
+                      {/* Increment button */}
+                      {isWebControlled && (
+                          <button
+                              className="w-6 h-6 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 rounded text-white text-xs font-bold transition-colors"
+                              onMouseDown={() => handleButtonMouseDown(motor, true)}
+                              onMouseUp={() => handleButtonMouseUp(motor, true)}
+                              onMouseLeave={() => handleButtonMouseUp(motor, true)}
+                              title="Increase by 1% (hold for continuous)"
+                          >
+                              +
+                          </button>
+                      )}
+                  </div>
+                </td>
+                
+                {/* Range Max */}
+                <td className="px-2 py-1.5 text-gray-500 tabular-nums">
+                  {motor.rangeMax?.toString().padStart(4, '0') || '4095'}
+                </td>
+                
+                {/* Percentage */}
+                <td className="px-2 py-1.5 text-blue-400 tabular-nums text-right">{percentage.toFixed(1)}%</td>
+                
+                {/* Latency Average */}
+                <td className={`px-2 py-1.5 ${getLatencyColor(latency)} tabular-nums text-right`}>
+                  {latencyAvg.avg < 1000 
+                    ? `${latencyAvg.avg.toFixed(0)}ms` 
+                    : `${(latencyAvg.avg/1000).toFixed(1)}s`
+                  }
+                </td>
+                
+                {/* Latency Max */}
+                <td className={`px-2 py-1.5 ${getLatencyColor(latencyAvg.max)} tabular-nums text-right`}>
+                  {latencyAvg.max < 1000 
+                    ? `${latencyAvg.max.toFixed(0)}ms` 
+                    : `${(latencyAvg.max/1000).toFixed(1)}s`
+                  }
+                </td>
+                
+                {/* Status and Error */}
+                <td className={`px-2 py-1.5 font-bold ${getStatusTextColor(latency, hasError)}`} colSpan={2}>
+                  {motor.error ? (
+                    <span className="text-red-400 truncate" title={motor.error.description || 'Unknown error'}>
+                      {motor.error.kind}: {motor.error.description || 'Unknown error'}
+                    </span>
+                  ) : (
+                    getStatusText(latency, hasError)
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      </div>
+      {isWebControlled && (
+        <div className="px-2 py-1 bg-green-900/30 text-green-400 text-xs border-t border-gray-700/50">
+          <div className="flex items-center justify-between">
+            <span>🎮 Web Control Active</span>
+            <span className="text-gray-500">
+              Drag to move • Hold +/- for continuous
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MotorDataTable;

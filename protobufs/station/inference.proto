@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package inference;
+
+import "drivers.proto";
+
+message InferenceRx {
+    message Entry {
+        string queue = 1;
+        bytes  ptr   = 2;
+        drivers.QueueDataType type = 3;
+    }
+
+    uint64 local_stamp_ns     = 1;
+    uint64 monotonic_stamp_ns = 2;
+    uint64 app_start_id       = 3;
+
+    repeated Entry entries = 10;
+}

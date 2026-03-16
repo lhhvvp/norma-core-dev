@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package opts;
+
+message OptValue {
+    uint64 uint_value   = 1;
+    bool   bool_value   = 2;
+    bytes  bytes_value  = 3;
+    string string_value = 4;
+}

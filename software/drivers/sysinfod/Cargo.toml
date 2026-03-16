@@ -1,0 +1,20 @@
+[package]
+name = "sysinfod"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+normfs = { workspace = true }
+systime = { path = "../../station/shared/systime-rs" }
+station_iface = { path = "../../station/shared/station-iface" }
+prost = { workspace = true }
+sysinfo = "0.37.2"
+libc = "0.2"
+bytes = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+
+[lib]
+path = "src/lib.rs"

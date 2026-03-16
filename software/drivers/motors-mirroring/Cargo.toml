@@ -1,0 +1,25 @@
+[package]
+name = "motors-mirroring"
+version.workspace = true
+edition = "2024"
+authors = ["Alex Batsuev <ab@elrobot.eu>"]
+
+[features]
+default = []
+
+[dependencies]
+tokio = { workspace = true }
+normfs = { workspace = true }
+systime = { path = "../../station/shared/systime-rs" }
+station_iface = { path = "../../station/shared/station-iface" }
+st3215 = { path = "../st3215" }
+prost = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+log = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+prost-build = { workspace = true }

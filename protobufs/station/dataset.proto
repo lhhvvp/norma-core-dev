@@ -1,0 +1,26 @@
+syntax = "proto3";
+package dataset;
+
+message Episode {
+  repeated Frame frames = 10;
+}
+
+message ImagePath {
+    string image_id   = 1;
+    string image_path = 2;
+}
+
+message Frame {
+    uint64 episode_id                       = 1;
+    string goal                             = 2;
+    uint64 frame_seq_id                     = 3;
+    uint64 timestamp_ns_since_episode_start = 4;
+    
+    repeated float states  = 10;
+    repeated float actions = 11;
+    
+    repeated uint32 raw_states  = 12;
+    repeated uint32 raw_actions = 13;
+
+    repeated ImagePath image_paths = 20;
+}

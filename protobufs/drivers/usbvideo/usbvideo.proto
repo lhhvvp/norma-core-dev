@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package usbvideo;
+
+import "usbvideo/frame.proto";
+
+enum RxEnvelopeType {
+    ET_FRAMES = 0;
+
+    ET_DEVICE_CONNECTED       = 1;
+    ET_DEVICE_RECORDING_START = 3;
+    ET_DEVICE_RECORDING_END   = 4;
+    ET_DEVICE_DISCONNECTED    = 5;
+    ET_ERROR                  = 6;
+}
+
+message RxEnvelope {
+    RxEnvelopeType   type  = 1;
+    frame.FrameStamp stamp = 2; // for all excluding ET_FRAMES
+
+    Camera                camera  = 5;
+    repeated CameraFormat formats = 6;
+    string                error   = 7;
+
+    bytes last_inference_queue_ptr = 8;
+    
+    frame.FramesPack frames = 10;
+}
+
+message Camera {
+    uint32 vendor_id     = 1;
+    uint32 product_id    = 2;
+    string serial_number = 3;
+    string manufacturer  = 4;
+    string product       = 5;
+    uint32 bus_number    = 6;
+    uint32 device_number = 7;
+    string unique_id     = 8;
+}
+
+message CameraFormat {
+    uint32 fourcc            = 1;
+    uint32 index             = 2;
+    uint32 width             = 5;
+    uint32 height            = 6;
+    float  frames_per_second = 7;
+    bytes  guid              = 8; // full format id
+    uint32 frame_index = 9; // e.g. for libuvc
+}
