@@ -22,6 +22,8 @@ station --web --tcp
 
 Open your browser at **http://localhost:8889** to see the web interface.
 
+![Station Web Interface](images/screenshot.png)
+
 ## 🐍 Python Examples
 
 Control your robots with just a few lines of Python - **no dependencies needed!**
