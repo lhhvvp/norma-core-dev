@@ -112,7 +112,7 @@ send_commands(client, [cmd])
 |  | Waveshare RoArm-M2 | 📋 Planned |
 |  | Yahboom ROSMASTER X3 | 📋 Planned |
 | **Client Libraries** | Golang | 🚧 Work in Progress ([demo available](../../shared/station/)) |
-|  | Python | 🚧 Work in Progress |
+|  | Python | 🚧 Work in Progress ([examples available](../../shared/station_py/)) |
 |  | JavaScript | 📋 Planned |
 |  | TypeScript | 📋 Planned |
 | **Robotics Frameworks** | ROS | 📋 Planned |
