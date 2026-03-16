@@ -334,7 +334,6 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
     NSMutableArray<AVCaptureDeviceType> *deviceTypes = [NSMutableArray array];
     if (@available(macOS 10.15, *)) {
         [deviceTypes addObject:AVCaptureDeviceTypeExternal];
-        [deviceTypes addObject:AVCaptureDeviceTypeBuiltInWideAngleCamera]; // Built-in camera (monitor camera)
     }
     return deviceTypes;
 }

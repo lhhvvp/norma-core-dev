@@ -185,6 +185,17 @@ function HistoryPage() {
                             </div>
                           </div>
                         )}
+                        {parsedFrame.normvla && (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <span className="text-yellow-400 font-mono">{parsedFrame.normvla.queueId}</span>
+                              <span className="text-orange-400 text-xs px-1 py-0.5 bg-orange-900/30 rounded">INFERENCE</span>
+                            </div>
+                            <div className="text-gray-400 font-mono">
+                              {formatPtrBytes(parsedFrame.normvla.ptr)}
+                            </div>
+                          </div>
+                        )}
                         {parsedFrame.sysinfo && (
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
