@@ -220,8 +220,8 @@ const St3215MotorConfigPage: React.FC = () => {
             </h1>
           </div>
 
-          {/* Priority 1: Show error dump if error detected */}
-          {busStatus.errorDump ? (
+          {/* Priority 1: Show error dump if error detected (but not during motor ID change) */}
+          {busStatus.errorDump && !isMotorIdSetInProgress ? (
             <div className="space-y-6">
               <div className="bg-orange-900 border border-orange-600 rounded-lg p-6">
                 <div className="flex items-start gap-3">
