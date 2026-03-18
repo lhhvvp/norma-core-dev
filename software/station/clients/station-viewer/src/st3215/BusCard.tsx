@@ -343,7 +343,7 @@ const BusCard: React.FC<BusCardProps> = ({
         <div className="relative h-180">
           <div className="absolute inset-0 p-4 flex flex-col items-center justify-center bg-gray-900/20">
             <p className="text-yellow-400 mb-4 text-center">
-              3D model visualization is only available for 6-motor
+              3D model visualization is only available for 6 or 8-motor
               configurations.
               <br />
               This bus has {bus.motors?.length || 0} motor
