@@ -110,7 +110,10 @@ async def main():
 asyncio.run(main())
 ```
 
-**See full examples:** [station_py/example_follow.py](../../shared/station_py/example_follow.py) and [station_py/example_commands.py](../../shared/station_py/example_commands.py)
+**See full examples:**
+- [SO101 Auto-Calibration](../../examples/so101-autocalibration-py/) - Complete motor control workflow demonstrating state subscription and command sending
+- [station_py/example_follow.py](../../shared/station_py/example_follow.py) - Basic state subscription
+- [station_py/example_commands.py](../../shared/station_py/example_commands.py) - Basic command sending
 
 ## ✨ Features
 
