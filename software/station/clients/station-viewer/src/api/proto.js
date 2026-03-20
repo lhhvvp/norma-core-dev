@@ -5440,6 +5440,7 @@ export const st3215 = $root.st3215 = (() => {
          * @memberof st3215
          * @interface IFreezeCalibrationCommand
          * @property {boolean|null} [freeze] FreezeCalibrationCommand freeze
+         * @property {Array.<st3215.IFreezeMotorArc>|null} [arcs] FreezeCalibrationCommand arcs
          */
 
         /**
@@ -5451,6 +5452,7 @@ export const st3215 = $root.st3215 = (() => {
          * @param {st3215.IFreezeCalibrationCommand=} [properties] Properties to set
          */
         function FreezeCalibrationCommand(properties) {
+            this.arcs = [];
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
@@ -5464,6 +5466,14 @@ export const st3215 = $root.st3215 = (() => {
          * @instance
          */
         FreezeCalibrationCommand.prototype.freeze = false;
+
+        /**
+         * FreezeCalibrationCommand arcs.
+         * @member {Array.<st3215.IFreezeMotorArc>} arcs
+         * @memberof st3215.FreezeCalibrationCommand
+         * @instance
+         */
+        FreezeCalibrationCommand.prototype.arcs = $util.emptyArray;
 
         /**
          * Creates a new FreezeCalibrationCommand instance using the specified properties.
@@ -5491,6 +5501,9 @@ export const st3215 = $root.st3215 = (() => {
                 writer = $Writer.create();
             if (message.freeze != null && Object.hasOwnProperty.call(message, "freeze"))
                 writer.uint32(/* id 1, wireType 0 =*/8).bool(message.freeze);
+            if (message.arcs != null && message.arcs.length)
+                for (let i = 0; i < message.arcs.length; ++i)
+                    $root.st3215.FreezeMotorArc.encode(message.arcs[i], writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
             return writer;
         };
 
@@ -5531,6 +5544,12 @@ export const st3215 = $root.st3215 = (() => {
                         message.freeze = reader.bool();
                         break;
                     }
+                case 2: {
+                        if (!(message.arcs && message.arcs.length))
+                            message.arcs = [];
+                        message.arcs.push($root.st3215.FreezeMotorArc.decode(reader, reader.uint32()));
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -5569,6 +5588,15 @@ export const st3215 = $root.st3215 = (() => {
             if (message.freeze != null && message.hasOwnProperty("freeze"))
                 if (typeof message.freeze !== "boolean")
                     return "freeze: boolean expected";
+            if (message.arcs != null && message.hasOwnProperty("arcs")) {
+                if (!Array.isArray(message.arcs))
+                    return "arcs: array expected";
+                for (let i = 0; i < message.arcs.length; ++i) {
+                    let error = $root.st3215.FreezeMotorArc.verify(message.arcs[i]);
+                    if (error)
+                        return "arcs." + error;
+                }
+            }
             return null;
         };
 
@@ -5586,6 +5614,16 @@ export const st3215 = $root.st3215 = (() => {
             let message = new $root.st3215.FreezeCalibrationCommand();
             if (object.freeze != null)
                 message.freeze = Boolean(object.freeze);
+            if (object.arcs) {
+                if (!Array.isArray(object.arcs))
+                    throw TypeError(".st3215.FreezeCalibrationCommand.arcs: array expected");
+                message.arcs = [];
+                for (let i = 0; i < object.arcs.length; ++i) {
+                    if (typeof object.arcs[i] !== "object")
+                        throw TypeError(".st3215.FreezeCalibrationCommand.arcs: object expected");
+                    message.arcs[i] = $root.st3215.FreezeMotorArc.fromObject(object.arcs[i]);
+                }
+            }
             return message;
         };
 
@@ -5602,10 +5640,17 @@ export const st3215 = $root.st3215 = (() => {
             if (!options)
                 options = {};
             let object = {};
+            if (options.arrays || options.defaults)
+                object.arcs = [];
             if (options.defaults)
                 object.freeze = false;
             if (message.freeze != null && message.hasOwnProperty("freeze"))
                 object.freeze = message.freeze;
+            if (message.arcs && message.arcs.length) {
+                object.arcs = [];
+                for (let j = 0; j < message.arcs.length; ++j)
+                    object.arcs[j] = $root.st3215.FreezeMotorArc.toObject(message.arcs[j], options);
+            }
             return object;
         };
 
@@ -5636,6 +5681,281 @@ export const st3215 = $root.st3215 = (() => {
         };
 
         return FreezeCalibrationCommand;
+    })();
+
+    st3215.FreezeMotorArc = (function() {
+
+        /**
+         * Properties of a FreezeMotorArc.
+         * @memberof st3215
+         * @interface IFreezeMotorArc
+         * @property {number|null} [motorId] FreezeMotorArc motorId
+         * @property {number|null} [minAngle] FreezeMotorArc minAngle
+         * @property {number|null} [maxAngle] FreezeMotorArc maxAngle
+         * @property {number|null} [midpoint] FreezeMotorArc midpoint
+         */
+
+        /**
+         * Constructs a new FreezeMotorArc.
+         * @memberof st3215
+         * @classdesc Represents a FreezeMotorArc.
+         * @implements IFreezeMotorArc
+         * @constructor
+         * @param {st3215.IFreezeMotorArc=} [properties] Properties to set
+         */
+        function FreezeMotorArc(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * FreezeMotorArc motorId.
+         * @member {number} motorId
+         * @memberof st3215.FreezeMotorArc
+         * @instance
+         */
+        FreezeMotorArc.prototype.motorId = 0;
+
+        /**
+         * FreezeMotorArc minAngle.
+         * @member {number} minAngle
+         * @memberof st3215.FreezeMotorArc
+         * @instance
+         */
+        FreezeMotorArc.prototype.minAngle = 0;
+
+        /**
+         * FreezeMotorArc maxAngle.
+         * @member {number} maxAngle
+         * @memberof st3215.FreezeMotorArc
+         * @instance
+         */
+        FreezeMotorArc.prototype.maxAngle = 0;
+
+        /**
+         * FreezeMotorArc midpoint.
+         * @member {number} midpoint
+         * @memberof st3215.FreezeMotorArc
+         * @instance
+         */
+        FreezeMotorArc.prototype.midpoint = 0;
+
+        /**
+         * Creates a new FreezeMotorArc instance using the specified properties.
+         * @function create
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {st3215.IFreezeMotorArc=} [properties] Properties to set
+         * @returns {st3215.FreezeMotorArc} FreezeMotorArc instance
+         */
+        FreezeMotorArc.create = function create(properties) {
+            return new FreezeMotorArc(properties);
+        };
+
+        /**
+         * Encodes the specified FreezeMotorArc message. Does not implicitly {@link st3215.FreezeMotorArc.verify|verify} messages.
+         * @function encode
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {st3215.IFreezeMotorArc} message FreezeMotorArc message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        FreezeMotorArc.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.motorId != null && Object.hasOwnProperty.call(message, "motorId"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.motorId);
+            if (message.minAngle != null && Object.hasOwnProperty.call(message, "minAngle"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.minAngle);
+            if (message.maxAngle != null && Object.hasOwnProperty.call(message, "maxAngle"))
+                writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxAngle);
+            if (message.midpoint != null && Object.hasOwnProperty.call(message, "midpoint"))
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.midpoint);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified FreezeMotorArc message, length delimited. Does not implicitly {@link st3215.FreezeMotorArc.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {st3215.IFreezeMotorArc} message FreezeMotorArc message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        FreezeMotorArc.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a FreezeMotorArc message from the specified reader or buffer.
+         * @function decode
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {st3215.FreezeMotorArc} FreezeMotorArc
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        FreezeMotorArc.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.st3215.FreezeMotorArc();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.motorId = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        message.minAngle = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        message.maxAngle = reader.uint32();
+                        break;
+                    }
+                case 4: {
+                        message.midpoint = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a FreezeMotorArc message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {st3215.FreezeMotorArc} FreezeMotorArc
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        FreezeMotorArc.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a FreezeMotorArc message.
+         * @function verify
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        FreezeMotorArc.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.motorId != null && message.hasOwnProperty("motorId"))
+                if (!$util.isInteger(message.motorId))
+                    return "motorId: integer expected";
+            if (message.minAngle != null && message.hasOwnProperty("minAngle"))
+                if (!$util.isInteger(message.minAngle))
+                    return "minAngle: integer expected";
+            if (message.maxAngle != null && message.hasOwnProperty("maxAngle"))
+                if (!$util.isInteger(message.maxAngle))
+                    return "maxAngle: integer expected";
+            if (message.midpoint != null && message.hasOwnProperty("midpoint"))
+                if (!$util.isInteger(message.midpoint))
+                    return "midpoint: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a FreezeMotorArc message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {st3215.FreezeMotorArc} FreezeMotorArc
+         */
+        FreezeMotorArc.fromObject = function fromObject(object) {
+            if (object instanceof $root.st3215.FreezeMotorArc)
+                return object;
+            let message = new $root.st3215.FreezeMotorArc();
+            if (object.motorId != null)
+                message.motorId = object.motorId >>> 0;
+            if (object.minAngle != null)
+                message.minAngle = object.minAngle >>> 0;
+            if (object.maxAngle != null)
+                message.maxAngle = object.maxAngle >>> 0;
+            if (object.midpoint != null)
+                message.midpoint = object.midpoint >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a FreezeMotorArc message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {st3215.FreezeMotorArc} message FreezeMotorArc
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        FreezeMotorArc.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.motorId = 0;
+                object.minAngle = 0;
+                object.maxAngle = 0;
+                object.midpoint = 0;
+            }
+            if (message.motorId != null && message.hasOwnProperty("motorId"))
+                object.motorId = message.motorId;
+            if (message.minAngle != null && message.hasOwnProperty("minAngle"))
+                object.minAngle = message.minAngle;
+            if (message.maxAngle != null && message.hasOwnProperty("maxAngle"))
+                object.maxAngle = message.maxAngle;
+            if (message.midpoint != null && message.hasOwnProperty("midpoint"))
+                object.midpoint = message.midpoint;
+            return object;
+        };
+
+        /**
+         * Converts this FreezeMotorArc to JSON.
+         * @function toJSON
+         * @memberof st3215.FreezeMotorArc
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        FreezeMotorArc.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for FreezeMotorArc
+         * @function getTypeUrl
+         * @memberof st3215.FreezeMotorArc
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        FreezeMotorArc.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/st3215.FreezeMotorArc";
+        };
+
+        return FreezeMotorArc;
     })();
 
     st3215.AutoCalibrateCommand = (function() {

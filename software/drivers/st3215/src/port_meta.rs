@@ -203,18 +203,31 @@ impl St3215PortMeta {
                             &target_serial
                         );
 
-                        let arcs: Vec<MotorArc> = motor_points
-                            .keys()
-                            .map(|motor_id| {
-                                let bounds = comm.get_bounds(&target_serial, *motor_id as u32);
-                                let (range_min, range_max, _) = bounds.unwrap();
+                        let freeze_cmd = command.freeze_calibration.as_ref().unwrap();
 
-                                let range = if range_min < range_max {
-                                    range_max - range_min
+                        // Use provided arcs if available, otherwise calculate from motor_points
+                        let arcs: Vec<MotorArc> = if !freeze_cmd.arcs.is_empty() {
+                            log::info!("Using {} provided motor arcs for freeze", freeze_cmd.arcs.len());
+
+                            // Calculate centered bounds from provided arcs
+                            // port.rs::freeze_calibration will use the midpoint from command to write offset
+                            freeze_cmd.arcs.iter().map(|arc| {
+                                let raw_min = arc.min_angle;
+                                let raw_max = arc.max_angle;
+
+                                log::info!(
+                                    "Motor {}: Received raw arc min={} max={} midpoint={}",
+                                    arc.motor_id, raw_min, raw_max, arc.midpoint
+                                );
+
+                                // Calculate range (handle wrap-around)
+                                let range = if raw_max >= raw_min {
+                                    raw_max - raw_min
                                 } else {
-                                    (4096 - range_min) + range_max
+                                    (4096 - raw_min) + raw_max
                                 };
 
+                                // Center around 2048
                                 let new_min = 2048 - (range as i32 / 2);
                                 let new_max = 2048 + (range as i32 / 2);
 
@@ -224,23 +237,72 @@ impl St3215PortMeta {
                                 let new_min = new_min as u32;
                                 let new_max = new_max as u32;
 
-                                comm.update_bounds(
-                                    &target_serial,
-                                    *motor_id as u32,
-                                    new_min,
-                                    new_max,
-                                    true,
+                                log::info!(
+                                    "Motor {}: Centered bounds min={} max={} (range={})",
+                                    arc.motor_id, new_min, new_max, range
                                 );
 
+                                // Update bounds with centered values
+                                comm.update_bounds(
+                                    &target_serial,
+                                    arc.motor_id,
+                                    new_min,
+                                    new_max,
+                                    true,  // Frozen
+                                );
+
+                                // Return centered arc for meta envelope
                                 MotorArc {
-                                    motor_id: *motor_id as u32,
+                                    motor_id: arc.motor_id,
                                     min_angle: new_min,
                                     max_angle: new_max,
                                     range_freezed: true,
                                     positions: vec![],
                                 }
-                            })
-                            .collect();
+                            }).collect()
+                        } else {
+                            log::info!("No arcs provided, calculating from motor_points");
+
+                            // Original behavior: calculate from tracked motor_points
+                            motor_points
+                                .keys()
+                                .map(|motor_id| {
+                                    let bounds = comm.get_bounds(&target_serial, *motor_id as u32);
+                                    let (range_min, range_max, _) = bounds.unwrap();
+
+                                    let range = if range_min < range_max {
+                                        range_max - range_min
+                                    } else {
+                                        (4096 - range_min) + range_max
+                                    };
+
+                                    let new_min = 2048 - (range as i32 / 2);
+                                    let new_max = 2048 + (range as i32 / 2);
+
+                                    let new_min = (new_min + 4096) % 4096;
+                                    let new_max = new_max % 4096;
+
+                                    let new_min = new_min as u32;
+                                    let new_max = new_max as u32;
+
+                                    comm.update_bounds(
+                                        &target_serial,
+                                        *motor_id as u32,
+                                        new_min,
+                                        new_max,
+                                        true,
+                                    );
+
+                                    MotorArc {
+                                        motor_id: *motor_id as u32,
+                                        min_angle: new_min,
+                                        max_angle: new_max,
+                                        range_freezed: true,
+                                        positions: vec![],
+                                    }
+                                })
+                                .collect()
+                        };
 
                         let meta_envelope = MetaEnvelope {
                             bus_serial: target_serial.clone(),

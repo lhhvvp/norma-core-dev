@@ -1559,11 +1559,21 @@ class ResetCalibrationCommandReader:
 class FreezeCalibrationCommand:
     # fields
     freeze: bool = False
+    arcs: list[FreezeMotorArc | None] | None = None
 
     def calc_protobuf_size(self) -> int:
         res = 0
         if self.freeze:
             res += 2
+        if self.arcs is not None:
+            for v in self.arcs:
+                res += 1
+                if v is not None:
+                    size = v.calc_protobuf_size()
+                    res += (((size | 1).bit_length() + 6) // 7) + size
+                else:
+                    res += 1
+        
         return res
 
     def encode(self) -> bytes:
@@ -1578,11 +1588,21 @@ class FreezeCalibrationCommand:
     def encode_to(self, target: typing.Union[gremlin.Writer, gremlin.StreamingWriter]):
         if self.freeze:
             target.append_bool(b'\x08', self.freeze)
+        if self.arcs is not None:
+            for v in self.arcs:
+                if v is not None:
+                    size = v.calc_protobuf_size()
+                    target.append_bytes_size_with_tag(b'\x12', size)
+                    v.encode_to(target)
+                else:
+                    target.append_bytes_size_with_tag(b'\x12', 0)
+        
 
 
 class FreezeCalibrationCommandReader:
     def __init__(self, src: memoryview):
         self._freeze: bool = False
+        self._arcs_bufs: list[memoryview] | None = None
 
         if not src:
             return
@@ -1596,11 +1616,114 @@ class FreezeCalibrationCommandReader:
                     result = self._buf.read_bool(offset)
                     offset += result.size
                     self._freeze = result.value
+                case 2:
+                    result = self._buf.read_bytes_view(offset)
+                    offset += result.size
+                    if self._arcs_bufs is None:
+                        self._arcs_bufs = []
+                    self._arcs_bufs.append(result.value)
+            
                 case _:
                     offset = self._buf.skip_data(offset, tag.wire)
 
     def get_freeze(self) -> bool:
         return self._freeze
+
+    def get_arcs(self) -> list[FreezeMotorArcReader]:
+        if self._arcs_bufs is not None:
+            result: list[FreezeMotorArcReader] = []
+            for buf in self._arcs_bufs:
+                result.append(FreezeMotorArcReader(buf))
+            return result
+        return []
+    
+
+
+@dataclasses.dataclass
+class FreezeMotorArc:
+    # fields
+    motor_id: int = 0
+    min_angle: int = 0
+    max_angle: int = 0
+    midpoint: int = 0
+
+    def calc_protobuf_size(self) -> int:
+        res = 0
+        if self.motor_id != 0:
+            res += 1 + gremlin.sizes.size_varint(self.motor_id)
+        if self.min_angle != 0:
+            res += 1 + gremlin.sizes.size_varint(self.min_angle)
+        if self.max_angle != 0:
+            res += 1 + gremlin.sizes.size_varint(self.max_angle)
+        if self.midpoint != 0:
+            res += 1 + gremlin.sizes.size_varint(self.midpoint)
+        return res
+
+    def encode(self) -> bytes:
+        size = self.calc_protobuf_size()
+        if size == 0:
+            return b''
+        buf = bytearray(size)
+        writer = gremlin.Writer(buf)
+        self.encode_to(writer)
+        return bytes(buf)
+
+    def encode_to(self, target: typing.Union[gremlin.Writer, gremlin.StreamingWriter]):
+        if self.motor_id != 0:
+            target.append_uint32(b'\x08', self.motor_id)
+        if self.min_angle != 0:
+            target.append_uint32(b'\x10', self.min_angle)
+        if self.max_angle != 0:
+            target.append_uint32(b'\x18', self.max_angle)
+        if self.midpoint != 0:
+            target.append_uint32(b' ', self.midpoint)
+
+
+class FreezeMotorArcReader:
+    def __init__(self, src: memoryview):
+        self._motor_id: int = 0
+        self._min_angle: int = 0
+        self._max_angle: int = 0
+        self._midpoint: int = 0
+
+        if not src:
+            return
+        self._buf = gremlin.Reader(src)
+        offset = 0
+        while offset < len(src):
+            tag = self._buf.read_tag_at(offset)
+            offset += tag.size
+            match tag.number:
+                case 1:
+                    result = self._buf.read_uint32(offset)
+                    offset += result.size
+                    self._motor_id = result.value
+                case 2:
+                    result = self._buf.read_uint32(offset)
+                    offset += result.size
+                    self._min_angle = result.value
+                case 3:
+                    result = self._buf.read_uint32(offset)
+                    offset += result.size
+                    self._max_angle = result.value
+                case 4:
+                    result = self._buf.read_uint32(offset)
+                    offset += result.size
+                    self._midpoint = result.value
+                case _:
+                    offset = self._buf.skip_data(offset, tag.wire)
+
+    def get_motor_id(self) -> int:
+        return self._motor_id
+
+    def get_min_angle(self) -> int:
+        return self._min_angle
+
+    def get_max_angle(self) -> int:
+        return self._max_angle
+
+    def get_midpoint(self) -> int:
+        return self._midpoint
 
 
 @dataclasses.dataclass

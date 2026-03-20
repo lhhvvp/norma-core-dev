@@ -150,6 +150,14 @@ message ResetCalibrationCommand {
 
 message FreezeCalibrationCommand {
     bool freeze = 1;
+    repeated FreezeMotorArc arcs = 2;
+}
+
+message FreezeMotorArc {
+    uint32 motor_id  = 1;
+    uint32 min_angle = 2;
+    uint32 max_angle = 3;
+    uint32 midpoint  = 4;
 }
 
 message AutoCalibrateCommand {

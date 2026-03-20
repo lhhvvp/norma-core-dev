@@ -727,8 +727,21 @@ impl St3215Port {
             .unwrap_or(false)
         {
             info!("Processing ST3215 FreezeCalibration command for all motors.");
+
+            // Extract midpoints from provided arcs if available
+            let freeze_cmd = command.freeze_calibration.as_ref().unwrap();
+            let mut midpoints: std::collections::HashMap<u8, u16> = std::collections::HashMap::new();
+
+            for arc in &freeze_cmd.arcs {
+                if arc.midpoint > 0 {
+                    midpoints.insert(arc.motor_id as u8, arc.midpoint as u16);
+                    info!("Motor {}: Using provided midpoint from command: {}", arc.motor_id, arc.midpoint);
+                }
+            }
+
             for motor_id in 1..=MAX_MOTORS_CNT {
-                if let Err(e) = Self::freeze_calibration(port, motor_id, meta, bus_info).await {
+                let provided_midpoint = midpoints.get(&motor_id).copied();
+                if let Err(e) = Self::freeze_calibration(port, motor_id, meta, bus_info, provided_midpoint).await {
                     warn!("Failed to freeze calibration for motor {}: {}", motor_id, e);
                 }
             }
@@ -873,17 +886,26 @@ impl St3215Port {
         motor_id: u8,
         meta: &St3215PortMeta,
         bus_info: &St3215BusProto,
+        provided_midpoint: Option<u16>,
     ) -> Result<(), protocol::Error> {
-        // 1. Get midpoint
-        let midpoint = match meta.get_midpoint(motor_id) {
-            Some(mp) => mp,
-            None => {
-                warn!(
-                    "Could not calculate midpoint for motor {}. No calibration data?",
-                    motor_id
-                );
-                // Not a protocol error, but we can't proceed.
-                return Ok(());
+        // 1. Get midpoint - use provided if available, otherwise calculate
+        let midpoint = if let Some(mp) = provided_midpoint {
+            info!("Motor {}: Using provided midpoint {}", motor_id, mp);
+            mp
+        } else {
+            match meta.get_midpoint(motor_id) {
+                Some(mp) => {
+                    info!("Motor {}: Calculated midpoint {}", motor_id, mp);
+                    mp
+                }
+                None => {
+                    warn!(
+                        "Could not calculate midpoint for motor {}. No calibration data?",
+                        motor_id
+                    );
+                    // Not a protocol error, but we can't proceed.
+                    return Ok(());
+                }
             }
         };
 
