@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {st3215} from '../api/proto';
-import { getMotorPosition, getMotorCurrent } from './motor-parser';
+import { getMotorPosition, getMotorCurrent, getMotorTemperature } from './motor-parser';
 import { serverToLocal } from '../api/timestamp-utils';
 import Long from 'long';
 import { commandManager } from '../api/commands';
@@ -103,6 +103,14 @@ const MotorDataTable: React.FC<MotorDataTableProps> = ({ bus, busIndex, isWebCon
     if (current < 100) return "text-green-400";
     if (current < 200) return "text-yellow-400";
     if (current < 300) return "text-orange-400";
+    return "text-red-400";
+  };
+
+  const getTemperatureColor = (temp: number) => {
+    if (temp === 0) return "text-gray-500";
+    if (temp < 40) return "text-green-400";
+    if (temp < 50) return "text-yellow-400";
+    if (temp < 60) return "text-orange-400";
     return "text-red-400";
   };
 
@@ -403,6 +411,7 @@ const MotorDataTable: React.FC<MotorDataTableProps> = ({ bus, busIndex, isWebCon
             <th className="px-2 py-1 text-right">CURR</th>
             <th className="px-2 py-1 text-center" colSpan={3}>RANGE</th>
             <th className="px-2 py-1 text-right">%</th>
+            <th className="px-2 py-1 text-right">TEMP</th>
             <th className="px-2 py-1 text-right">LAG</th>
             <th className="px-2 py-1 text-right">MAX</th>
             <th className="px-2 py-1 text-left" colSpan={2}>STATUS</th>
@@ -413,6 +422,7 @@ const MotorDataTable: React.FC<MotorDataTableProps> = ({ bus, busIndex, isWebCon
             const controlState = motor.id ? motorControlStates.get(motor.id) : undefined;
             const position = motor.state ? getMotorPosition(motor.state) : 0;
             const current = motor.state ? getMotorCurrent(motor.state) : 0;
+            const temperature = motor.state ? getMotorTemperature(motor.state) : 0;
             const percentage = calculatePercentage(position, motor.rangeMin || 0, motor.rangeMax || 0);
             const adjustedMotorStamp = motor.monotonicStampNs ? serverToLocal(Long.fromValue(motor.monotonicStampNs)) : null;
             const latency = adjustedMotorStamp ? (now - (adjustedMotorStamp.toNumber() / 1e6)) : 0;
@@ -537,6 +547,11 @@ const MotorDataTable: React.FC<MotorDataTableProps> = ({ bus, busIndex, isWebCon
                 {/* Percentage */}
                 <td className="px-2 py-1.5 text-blue-400 tabular-nums text-right">{percentage.toFixed(1)}%</td>
                 
+                {/* Temperature */}
+                <td className={`px-2 py-1.5 ${getTemperatureColor(temperature)} tabular-nums text-right`}>
+                  {temperature}°C
+                </td>
+
                 {/* Latency Average */}
                 <td className={`px-2 py-1.5 ${getLatencyColor(latency)} tabular-nums text-right`}>
                   {latencyAvg.avg < 1000 
