@@ -53,4 +53,4 @@ pub const CALIBRATION_SPEED: u16 = 365;
 pub const CALIBRATION_ACCEL: u8 = 50;
 
 /// Torque limit during calibration
-pub const CALIBRATION_TORQUE_LIMIT: u16 = 1000; // 300;
+pub const CALIBRATION_TORQUE_LIMIT: u16 = 300;

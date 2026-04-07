@@ -188,24 +188,24 @@ async fn run_calibration_sequence(
     calibrator.shift(6, -1130, 1).await?;
 
     // ── Steps 17-19: Calibrate motor 7 ───────────────────────────────────
-    // calibrator.next_step("Motor 7: Find minimum").await?;
-    // calibrator.find_min(7, 0).await?;
-    // calibrator.next_step("Motor 7: Find maximum").await?;
-    // calibrator.find_max(7, 0).await?;
-    // calibrator.next_step("Motor 7: Move to center").await?;
-    // calibrator.shift(7, -1750, 0).await?;
+    calibrator.next_step("Motor 7: Find minimum").await?;
+    calibrator.find_min(7, 0).await?;
+    calibrator.next_step("Motor 7: Find maximum").await?;
+    calibrator.find_max(7, 0).await?;
+    calibrator.next_step("Motor 7: Move to center").await?;
+    calibrator.shift(7, -1750, 0).await?;
 
-    // calibrator.go_to_float_position(7, 0.5, 1).await?;
+    calibrator.go_to_float_position(7, 0.5, 1).await?;
 
     // ── Steps 20-22: Calibrate motor 5 ───────────────────────────────────
-    // calibrator.next_step("Motor 5: Find minimum").await?;
-    // calibrator.find_min(5, 0).await?;
-    // calibrator.next_step("Motor 5: Find maximum").await?;
-    // calibrator.find_max(5, 0).await?;
-    // calibrator.next_step("Motor 5: Move to center").await?;
-    // calibrator.shift(5, -1860, 0).await?;
+    calibrator.next_step("Motor 5: Find minimum").await?;
+    calibrator.find_min(5, 0).await?;
+    calibrator.next_step("Motor 5: Find maximum").await?;
+    calibrator.find_max(5, 0).await?;
+    calibrator.next_step("Motor 5: Move to center").await?;
+    calibrator.shift(5, -1860, 0).await?;
 
-    // calibrator.go_to_float_position(5, 0.5, 1).await?;
+    calibrator.go_to_float_position(5, 0.5, 1).await?;
 
     // ── Steps 23-28: Final calibration passes for motors 2, 3, 4 ────────
     calibrator.next_step("Motor 2: Shift by 1030").await?;
