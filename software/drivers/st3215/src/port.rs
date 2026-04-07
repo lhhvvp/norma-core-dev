@@ -774,9 +774,15 @@ impl St3215Port {
             }
 
             let mut all_ok = true;
-            for motor_id in 1..=MAX_MOTORS_CNT {
+            let max_motors_cnt = if !freeze_cmd.arcs.is_empty() {
+                freeze_cmd.arcs.len() as u8
+            } else {
+                MAX_MOTORS_CNT
+            };
+
+            for motor_id in 1..=max_motors_cnt {
                 let provided_midpoint = midpoints.get(&motor_id).copied();
-                match Self::freeze_calibration(port, motor_id, meta, bus_info, provided_midpoint).await {
+                match Self::freeze_calibration(port, motor_id, meta, bus_info, provided_midpoint, max_motors_cnt).await {
                     Ok(verified) => { all_ok &= verified; }
                     Err(e) => {
                         warn!("Failed to freeze calibration for motor {}: {}", motor_id, e);
@@ -971,6 +977,7 @@ impl St3215Port {
         meta: &St3215PortMeta,
         bus_info: &St3215BusProto,
         provided_midpoint: Option<u16>,
+        max_motors_cnt: u8,
     ) -> Result<bool, protocol::Error> {
         // 1. Get midpoint - use provided if available, otherwise calculate
         let midpoint = if let Some(mp) = provided_midpoint {
@@ -1026,9 +1033,10 @@ impl St3215Port {
             .async_readwrite(port, ST3215_COMMAND_TIMEOUT_MS)
             .await?;
 
+        let pid = pid_config_for_motor_count(max_motors_cnt);
         info!(
-            "Applying custom calibration settings for motor {}",
-            motor_id
+            "Applying custom calibration settings for motor {} (PID: p={}, i={}, d={})",
+            motor_id, pid.p, pid.i, pid.d
         );
         let mut all_verified = true;
         // Set operating mode to position control
@@ -1044,7 +1052,7 @@ impl St3215Port {
             port,
             motor_id,
             protocol::EepromRegister::PCoef,
-            Bytes::from_static(&[DEFAULT_PID_P]),
+            Bytes::from(vec![pid.p]),
         )
         .await?;
         // Set I_Coefficient
@@ -1052,7 +1060,7 @@ impl St3215Port {
             port,
             motor_id,
             protocol::EepromRegister::ICoef,
-            Bytes::from_static(&[DEFAULT_PID_I]),
+            Bytes::from(vec![pid.i]),
         )
         .await?;
         // Set D_Coefficient
@@ -1060,7 +1068,7 @@ impl St3215Port {
             port,
             motor_id,
             protocol::EepromRegister::DCoef,
-            Bytes::from_static(&[DEFAULT_PID_D]),
+            Bytes::from(vec![pid.d]),
         )
         .await?;
         // Set Return Delay Time to 0
