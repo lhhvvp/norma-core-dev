@@ -1891,17 +1891,113 @@ pub use unpack::{unpack_state_bytes, UnpackError};
 For the six submodule files, create each as a stub that compiles. Use the placeholder-types approach: minimal type definitions so `lib.rs`'s re-exports resolve. Example `register.rs`:
 
 ```rust
-// src/register.rs (Task 2.1 stub; Task 2.2 fills in)
-#[repr(u16)]
+// src/register.rs (Task 2.1 stub; Task 2.2 replaces with real macro-based enums)
+// IMPORTANT: NO #[repr(u16)] — the real memory.rs uses a define_register_enum!
+// macro that generates enums WITHOUT explicit discriminants. Call sites
+// (Chunk 7 Task 7.5) use `.address()` not `as u16` to get byte addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EepromRegister { _Placeholder = 0 }
+pub enum EepromRegister { _Placeholder }
+impl EepromRegister {
+    pub const fn address(&self) -> u8 { 0 }
+    pub const fn size(&self) -> u8 { 0 }
+}
 
-#[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RamRegister { _Placeholder = 0 }
+pub enum RamRegister { _Placeholder }
+impl RamRegister {
+    pub const fn address(&self) -> u8 { 0 }
+    pub const fn size(&self) -> u8 { 0 }
+}
 ```
 
-Similar minimal stubs for `layout.rs` (export `pub const EEPROM_BYTES: usize = 40;` etc.), `units.rs` (empty), `pack.rs` (stub `MotorInstance`, `MotorSemanticState`, `pack_state_bytes` that `todo!()`), `unpack.rs` (stub `UnpackError`, `unpack_state_bytes`), `presets.rs` (stub `MotorModelSpec`, `ST3215_STANDARD` const).
+Minimal stubs for the other modules:
+
+```rust
+// src/layout.rs
+pub const EEPROM_BYTES: usize = 40;
+pub const RAM_BYTES: usize = 31;
+pub const TOTAL_BYTES: usize = EEPROM_BYTES + RAM_BYTES;
+pub const DEFAULT_EEPROM: [u8; EEPROM_BYTES] = [0u8; EEPROM_BYTES];
+```
+
+```rust
+// src/units.rs
+pub const STEPS_PER_REV: u32 = 4096;
+pub fn steps_to_rad(_steps: u16, _offset_steps: i16) -> f32 { 0.0 }
+pub fn rad_to_steps(_rad: f32, _offset_steps: i16) -> u16 { 0 }
+pub fn sign_magnitude_to_i16(_raw: u16) -> i16 { 0 }
+pub fn i16_to_sign_magnitude(_value: i16) -> u16 { 0 }
+```
+
+```rust
+// src/presets.rs
+#[derive(Debug, Clone)]
+pub struct MotorModelSpec {
+    pub model_number: u16,
+    pub firmware_version: u8,
+    pub baud_rate_code: u8,
+    pub steps_per_rev: u32,
+}
+pub const ST3215_STANDARD: MotorModelSpec = MotorModelSpec {
+    model_number: 777,
+    firmware_version: 10,
+    baud_rate_code: 0,
+    steps_per_rev: 4096,
+};
+```
+
+```rust
+// src/pack.rs
+use crate::presets::MotorModelSpec;
+#[derive(Debug, Clone)]
+pub struct MotorInstance {
+    pub min_angle_steps: u16,
+    pub max_angle_steps: u16,
+    pub offset_steps: i16,
+    pub torque_limit: u16,
+    pub voltage_nominal_v: f32,
+}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MotorSemanticState {
+    pub position_rad: f32,
+    pub velocity_rad_s: f32,
+    pub load_nm: f32,
+    pub temperature_c: f32,
+    pub torque_enabled: bool,
+    pub moving: bool,
+    pub goal_position_rad: f32,
+    pub goal_speed_rad_s: f32,
+}
+pub fn pack_state_bytes(
+    _motor_id: u8,
+    _spec: &MotorModelSpec,
+    _instance: &MotorInstance,
+    _state: &MotorSemanticState,
+) -> bytes::Bytes {
+    bytes::Bytes::new()
+}
+```
+
+```rust
+// src/unpack.rs
+use crate::pack::{MotorInstance, MotorSemanticState};
+use crate::presets::MotorModelSpec;
+use thiserror::Error;
+#[derive(Debug, Error)]
+pub enum UnpackError {
+    #[error("stub")]
+    Stub,
+}
+pub fn unpack_state_bytes(
+    _bytes: &[u8],
+    _spec: &MotorModelSpec,
+    _instance: &MotorInstance,
+) -> Result<MotorSemanticState, UnpackError> {
+    Ok(MotorSemanticState::default())
+}
+```
+
+Each stub is replaced by the real implementation in Tasks 2.2–2.6.
 
 - [ ] **Step 3: Add to workspace + build**
 
@@ -1938,21 +2034,58 @@ Classify:
 - Byte-layout constants (`EEPROM_BYTES=40`, `RAM_BYTES=31`, `TOTAL_BYTES=71`, `DEFAULT_EEPROM` table) → `layout.rs`
 - I/O / tokio / async methods → leave in `st3215`
 
-- [ ] **Step 2: Write `register.rs`** — transcribe the enum variants exactly. Every variant name and every `= 0xNN` address value must be preserved byte-for-byte.
+- [ ] **Step 2: Write `register.rs`** — copy the `define_register_enum!` macro and BOTH enum invocations verbatim from `software/drivers/st3215/src/protocol/memory.rs`.
 
-- [ ] **Step 3: Write `layout.rs`** — constants + `DEFAULT_EEPROM` table. Copy the exact byte values from the existing driver's equivalent (if the existing driver doesn't have a single table, synthesize from register defaults and note the source).
+**Do NOT rewrite the enums with explicit `#[repr(u16)]` discriminants**. The real file uses a macro:
 
-- [ ] **Step 4: Verify build + regression diff**
+```rust
+macro_rules! define_register_enum {
+    ($enum_name:ident, $($variant:ident => ($addr:expr, $size:expr, $desc:expr)),* $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum $enum_name {
+            $($variant),*
+        }
+        impl $enum_name {
+            pub const fn address(&self) -> u8 { match *self { $(Self::$variant => $addr),* } }
+            pub const fn size(&self) -> u8 { match *self { $(Self::$variant => $size),* } }
+            pub const fn description(&self) -> &'static str { match *self { $(Self::$variant => $desc),* } }
+            pub const fn name(&self) -> &'static str { match *self { $(Self::$variant => stringify!($variant)),* } }
+            pub fn iter() -> impl Iterator<Item = Self> {
+                [$(Self::$variant),*].iter().copied()
+            }
+        }
+    };
+}
+
+define_register_enum!(
+    EepromRegister,
+    ModelNumber => (0x00, 2, "Model Number"),
+    // ... copy ALL variants from memory.rs:44-76 ...
+);
+
+define_register_enum!(
+    RamRegister,
+    TorqueEnable => (0x28, 1, "Torque Enable"),
+    // ... copy ALL variants from memory.rs:78+ ...
+);
+```
+
+Copy EVERY variant declaration exactly as in the real file. Do not reorder, rename, or change any address or size value. Consumers (real driver + Chunk 7 bridge) call `.address()` to get the byte address — NOT `as u16`, because the macro-defined enum has no explicit discriminants.
+
+- [ ] **Step 3: Write `layout.rs`** — constants + `DEFAULT_EEPROM` table. Copy byte values from the existing driver's equivalent. If the existing driver doesn't have a single `DEFAULT_EEPROM` table, synthesize one by walking the register enums and noting which bytes are statically known (Model Number at 0x00 = 777, firmware version at 0x02 = 10, etc.). Un-set bytes should be 0.
+
+- [ ] **Step 4: Verify build + register address diff**
 
 ```bash
 cargo build -p st3215-wire 2>&1 | tail -10
-# Generate enum comparison snapshots
-grep -E "^\s*[A-Z][a-zA-Z]*\s*=" software/drivers/st3215/src/protocol/memory.rs > /tmp/old.txt
-grep -E "^\s*[A-Z][a-zA-Z]*\s*=" software/drivers/st3215-wire/src/register.rs > /tmp/new.txt
+# Compare address values between the original and the migrated file.
+# Both should use define_register_enum! macro invocations.
+grep -oE "[A-Z][a-zA-Z]* => \(0x[0-9A-Fa-f]+" software/drivers/st3215/src/protocol/memory.rs | sort > /tmp/old.txt
+grep -oE "[A-Z][a-zA-Z]* => \(0x[0-9A-Fa-f]+" software/drivers/st3215-wire/src/register.rs | sort > /tmp/new.txt
 diff /tmp/old.txt /tmp/new.txt
 ```
 
-Expected: diff shows only cosmetic differences. Variant name or address mismatch = bug.
+Expected: diff empty. Any mismatch means a variant was dropped, renamed, or had its address changed during migration — fix before proceeding.
 
 - [ ] **Step 5: Commit**
 
@@ -2310,12 +2443,22 @@ pub struct MotorModelSpec {
 pub const ST3215_STANDARD: MotorModelSpec = MotorModelSpec {
     model_number: 777,
     firmware_version: 10,
-    baud_rate_code: 0,
+    baud_rate_code: 0,   // verify with the command below before committing
     steps_per_rev: 4096,
 };
 ```
 
-**Verify baud_rate_code** against the existing driver's ST3215 default — it may be a specific enum value rather than 0.
+**Verify baud_rate_code against the real driver** (required; `baud_rate_code: 0` is an unverified guess):
+
+```bash
+grep -rn "baud_rate\|BaudRate" software/drivers/st3215/src/protocol/ software/drivers/st3215/src/presets.rs 2>/dev/null
+# Expected: find the default baud rate value used in the existing driver.
+# ST3215 uses a coded value (e.g., 0 = 1 Mbps, 1 = 500 Kbps, ...); copy whatever
+# the real driver assumes as the factory default. Update the stub above with
+# the verified value BEFORE committing.
+```
+
+If the grep finds no explicit baud_rate_code constant, trace through `auto_calibrate/elrobot.rs` or the `scan_motors` logic in `port.rs` to find what value the real driver reads from EEPROM at address 0x06. Match that.
 
 - [ ] **Commit**
 
@@ -2407,36 +2550,45 @@ git commit -m "st3215: depend on st3215-wire for protocol types (code move, no l
 # software/sim-runtime/Cargo.toml
 [package]
 name = "sim-runtime"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "SimulationRuntime subsystem: capability-keyed world state for Station."
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+# Workspace-shared deps (verified against software/drivers/st3215/Cargo.toml)
+tokio = { workspace = true }
+normfs = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+log = { workspace = true }
+# Direct deps
 tokio-util = { version = "0.7", features = ["codec"] }
-prost = "0.12"
-bytes = "1"
 thiserror = "1"
-log = "0.4"
 uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
-nix = { version = "0.27", features = ["signal"] }
-# Repo-internal deps (adjust paths as needed after verifying current workspace layout)
-normfs = { path = "../normfs" }
-station-iface = { path = "../station/shared/station-iface" }
+# Path deps (from software/sim-runtime/ up to software/station/shared/station-iface/)
+station_iface = { path = "../station/shared/station-iface" }
 
 [build-dependencies]
-prost-build = "0.12"
+prost-build = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full", "test-util"] }
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
 serde_yaml = "0.9"
 ```
 
-**Note**: verify the `normfs` and `station-iface` paths by inspecting an existing driver's `Cargo.toml` (e.g., `software/drivers/st3215/Cargo.toml`). They may differ from the `../normfs` / `../station/shared/station-iface` guesses above.
+**Important**: NormFS is a workspace dep (`normfs = "0.1.0-beta.0"` in root `Cargo.toml`), NOT a path dep. The existing `st3215` driver uses `normfs = { workspace = true }` — use the same pattern. Also note the station-iface crate name is `station_iface` (underscore, not hyphen) based on `st3215/Cargo.toml:20`. Verify by running:
+
+```bash
+ls software/station/shared/station-iface/Cargo.toml && echo "OK"
+grep -E "^name =" software/station/shared/station-iface/Cargo.toml
+# Expected: name = "station_iface"  (verify exact name and adjust dep key if needed)
+```
+
+**The `nix` dependency is omitted** — `tokio::process::Child::kill_on_drop(true)` + `Child::kill()` is sufficient for the MVP-1 graceful shutdown path. If §6.3 SIGTERM-before-SIGKILL semantics turn out to require explicit signal delivery, re-add `nix = { version = "0.27", features = ["signal"] }` in Task 4.6 when that code path is implemented, not here.
 
 - [ ] **Step 2: `build.rs`** (prost_build)
 
@@ -2444,13 +2596,16 @@ serde_yaml = "0.9"
 // software/sim-runtime/build.rs
 fn main() {
     println!("cargo:rerun-if-changed=../../protobufs/sim/world.proto");
-    let mut config = prost_build::Config::new();
-    config.out_dir("src/proto");
-    config
+    // Use prost's DEFAULT output directory (OUT_DIR under target/), not
+    // a checked-in src/proto/ path. This matches the st3215 driver's
+    // build.rs pattern and avoids git-tracked generated code.
+    prost_build::Config::new()
         .compile_protos(&["../../protobufs/sim/world.proto"], &["../../protobufs"])
         .expect("failed to compile world.proto");
 }
 ```
+
+**Critical note about `proto/mod.rs`**: the `include!(concat!(env!("OUT_DIR"), "/norma_sim.world.v1.rs"))` in the next step relies on prost writing its output to `OUT_DIR` (an env var Cargo sets to something like `target/debug/build/sim-runtime-<hash>/out/`). Do NOT set `config.out_dir("src/proto")` in `build.rs` — that would create a conflict with the `OUT_DIR` include and also put generated code into git. Pick ONE strategy and stick with it. This plan uses the `OUT_DIR` strategy (same as the existing `st3215` crate).
 
 - [ ] **Step 3: `src/lib.rs`**
 
@@ -2464,6 +2619,17 @@ fn main() {
 pub mod errors;
 pub mod clock;
 
+// These become visible to outside crates (bridge etc.) only via the public
+// SimulationRuntime struct that Chunk 4 Task 4.8 adds. The module declarations
+// are added in Chunk 3 Task 3.1 so the crate compiles with stubs; each
+// Chunk 4 task fills in the actual implementation.
+pub(crate) mod snapshot_broker;
+pub(crate) mod actuation_sender;
+pub(crate) mod registry;
+pub(crate) mod health;
+pub(crate) mod supervisor;
+pub(crate) mod runtime;    // ← Chunk 4 Task 4.8 fills this in
+
 pub(crate) mod backend;
 pub(crate) mod ipc;
 
@@ -2472,9 +2638,12 @@ pub mod proto;
 
 // Config types live in station-iface to avoid circular crate deps;
 // re-export them here for convenience.
-pub use station_iface::config::{SimRuntimeConfig, SimMode, LogCapture};
 pub use errors::SimRuntimeError;
+pub use runtime::SimulationRuntime;
+pub use station_iface::config::{LogCapture, SimMode, SimRuntimeConfig};
 ```
+
+**Important**: all seven `pub(crate) mod` declarations (`snapshot_broker`, `actuation_sender`, `registry`, `health`, `supervisor`, `runtime`, plus the existing `backend` and `ipc`) are created as EMPTY STUB FILES in this task's Step 5. Each Chunk 4 task then replaces the stub contents — no task needs to separately add a `pub(crate) mod X;` line to `lib.rs`. This avoids the common "forgot to register the module" bug.
 
 - [ ] **Step 4: `src/proto/mod.rs`**
 
@@ -2489,11 +2658,27 @@ pub use world::*;
 
 - [ ] **Step 5: Create stub module files**
 
-Use minimal placeholder contents (see Chunk 2 Task 2.1 for pattern):
+Use minimal placeholder contents (see Chunk 2 Task 2.1 for pattern). Every module declared in `lib.rs` must have a corresponding file or the crate won't compile:
+
+**Top-level `src/` stubs** (one file each):
 - `src/errors.rs`: `#[derive(Debug, thiserror::Error)] pub enum SimRuntimeError { #[error("stub")] Stub }`
-- `src/clock.rs`: empty
+- `src/clock.rs`: `// Task 3.4 fills this in.`
+- `src/snapshot_broker.rs`: `// Task 4.1 fills this in.`
+- `src/actuation_sender.rs`: `// Task 4.2 fills this in.`
+- `src/registry.rs`: `// Task 4.3 fills this in.`
+- `src/health.rs`: `// Task 4.4 fills this in.`
+- `src/supervisor.rs`: `// Task 4.5 fills this in.`
+- `src/runtime.rs`: needs a stub `SimulationRuntime` struct so `pub use runtime::SimulationRuntime;` in `lib.rs` resolves:
+  ```rust
+  // Task 4.8 replaces this stub
+  pub struct SimulationRuntime;
+  ```
+
+**`src/backend/` submodules**:
 - `src/backend/mod.rs`: `pub(crate) mod mock; pub(crate) mod runtime_dir; pub(crate) mod transport;`
 - `src/backend/mock.rs`, `runtime_dir.rs`, `transport.rs`: each `// stub`
+
+**`src/ipc/` submodules**:
 - `src/ipc/mod.rs`: `pub(crate) mod framing; pub(crate) mod codec; pub(crate) mod handshake;`
 - `src/ipc/framing.rs`, `codec.rs`, `handshake.rs`: each `// stub`
 
@@ -3083,7 +3268,9 @@ mod tests {
         broker.publish(snap);
         let a_got = a.recv().await.unwrap();
         let b_got = b.recv().await.unwrap();
-        assert_eq!(Arc::strong_count(&a_got), 3); // broker holds one, a and b hold one each wrapping Arc
+        // Intentionally no Arc::strong_count assertion — it's fragile across
+        // tokio versions. The real invariant under test is "both subscribers
+        // received the broadcast", which the field checks below prove.
         assert!(a_got.actuators.is_empty());
         assert!(b_got.actuators.is_empty());
     }
@@ -3129,7 +3316,10 @@ impl ActuationSender {
     }
 
     pub async fn send(&self, batch: ActuationBatch) -> Result<(), SimRuntimeError> {
-        match QosLane::from_i32(batch.lane).unwrap_or(QosLane::Unspecified) {
+        // Use try_from (idiomatic prost 0.12), not deprecated from_i32.
+        // Mirrors the pattern in software/drivers/st3215/src/state.rs:306 which
+        // uses `St3215SignalType::try_from(envelope.signal_type)`.
+        match QosLane::try_from(batch.lane).unwrap_or(QosLane::Unspecified) {
             QosLane::LossySetpoint => {
                 match self.lossy_tx.try_send(batch) {
                     Ok(()) => Ok(()),
@@ -3217,6 +3407,7 @@ Commit: `git commit -m "sim-runtime: add WorldRegistry"`.
 // software/sim-runtime/src/health.rs
 use crate::errors::SimRuntimeError;
 use crate::proto::{SimHealth, WorldDescriptor};
+use bytes::Bytes;
 use normfs::NormFS;
 use prost::Message;
 use std::sync::Arc;
@@ -3229,6 +3420,8 @@ pub(crate) struct HealthPublisher {
     normfs: Arc<NormFS>,
     broadcast_tx: broadcast::Sender<SimHealth>,
     session_id: String,
+    health_qid: normfs::QueueId,
+    descriptor_qid: normfs::QueueId,
 }
 
 impl HealthPublisher {
@@ -3236,18 +3429,25 @@ impl HealthPublisher {
         normfs: Arc<NormFS>,
         session_id: String,
     ) -> Result<Self, SimRuntimeError> {
-        // Register queues. Use whatever NormFS API the existing drivers use.
-        // Pattern from st3215 driver.rs: normfs.resolve + ensure_queue_exists_for_write.
+        // Verify the NormFS queue API against software/drivers/st3215/src/state.rs:145,
+        // which uses the pattern:
+        //   self.normfs.enqueue(queue_id, Bytes::from(envelope_buf))
+        // - `enqueue` is SYNCHRONOUS (no .await), takes `&QueueId` and `Bytes`
+        // - `resolve(name)` returns a `QueueId` (cached)
+        // - `ensure_queue_exists_for_write` is the existing driver's pattern for
+        //   registering a queue before first write; see st3215/driver.rs around
+        //   the `com4commands` subscribe block. Signature is:
+        //     async fn ensure_queue_exists_for_write(&self, qid: &QueueId) -> Result<(), _>
         let health_qid = normfs.resolve(SIM_HEALTH_QUEUE_ID);
         normfs.ensure_queue_exists_for_write(&health_qid).await
             .map_err(|e| SimRuntimeError::NormfsError(format!("health queue: {:?}", e)))?;
 
-        let desc_qid = normfs.resolve(SIM_DESCRIPTOR_QUEUE_ID);
-        normfs.ensure_queue_exists_for_write(&desc_qid).await
+        let descriptor_qid = normfs.resolve(SIM_DESCRIPTOR_QUEUE_ID);
+        normfs.ensure_queue_exists_for_write(&descriptor_qid).await
             .map_err(|e| SimRuntimeError::NormfsError(format!("descriptor queue: {:?}", e)))?;
 
         let (broadcast_tx, _) = broadcast::channel(64);
-        Ok(Self { normfs, broadcast_tx, session_id })
+        Ok(Self { normfs, broadcast_tx, session_id, health_qid, descriptor_qid })
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<SimHealth> {
@@ -3256,29 +3456,33 @@ impl HealthPublisher {
 
     /// One-shot write of WorldDescriptor to `/sim/descriptor` after handshake.
     /// This enables offline replay of archived capability-keyed commands.
-    pub async fn publish_descriptor(&self, desc: &WorldDescriptor) -> Result<(), SimRuntimeError> {
-        let qid = self.normfs.resolve(SIM_DESCRIPTOR_QUEUE_ID);
+    pub fn publish_descriptor(&self, desc: &WorldDescriptor) -> Result<(), SimRuntimeError> {
         let mut buf = Vec::with_capacity(desc.encoded_len());
         desc.encode(&mut buf).map_err(|_| SimRuntimeError::IpcClosed)?;
-        self.normfs.write(&qid, &buf).await
+        // enqueue is SYNCHRONOUS (no .await); mirrors st3215/state.rs:145
+        self.normfs.enqueue(&self.descriptor_qid, Bytes::from(buf))
             .map_err(|e| SimRuntimeError::NormfsError(format!("{:?}", e)))?;
         Ok(())
     }
 
-    pub async fn publish_health(&self, mut health: SimHealth) -> Result<(), SimRuntimeError> {
+    pub fn publish_health(&self, mut health: SimHealth) -> Result<(), SimRuntimeError> {
         health.runtime_session_id = self.session_id.clone();
         let _ = self.broadcast_tx.send(health.clone());
-        let qid = self.normfs.resolve(SIM_HEALTH_QUEUE_ID);
         let mut buf = Vec::with_capacity(health.encoded_len());
         health.encode(&mut buf).map_err(|_| SimRuntimeError::IpcClosed)?;
-        self.normfs.write(&qid, &buf).await
+        self.normfs.enqueue(&self.health_qid, Bytes::from(buf))
             .map_err(|e| SimRuntimeError::NormfsError(format!("{:?}", e)))?;
         Ok(())
     }
 }
 ```
 
-**Important**: the `normfs` API calls (`resolve`, `ensure_queue_exists_for_write`, `write`) are assumptions — verify against the real `normfs` crate signatures by reading `software/drivers/st3215/src/driver.rs` and `software/station/bin/station/src/main.rs`. If the method names or signatures differ, adapt.
+**Verified NormFS API** (from `software/drivers/st3215/src/state.rs:145,350,500`):
+- `enqueue(queue_id: &QueueId, data: Bytes) -> Result<(), _>` — **synchronous**, no `.await`
+- `resolve(name: &str) -> QueueId` — synchronous, cached
+- `ensure_queue_exists_for_write(qid: &QueueId) -> Result<(), _>` — async, called during setup
+
+**Important**: `publish_descriptor` and `publish_health` are now **synchronous** (no `async fn`). Callers elsewhere in the plan (e.g., Chunk 4 Task 4.8 `runtime.rs`) must drop the `.await` when calling these methods.
 
 Tests: `test_descriptor_written_to_queue` (read back, compare), `test_health_propagated_to_broadcast_and_queue`. Commit: `git commit -m "sim-runtime: add HealthPublisher with /sim/descriptor + /sim/health queues"`.
 
@@ -3355,7 +3559,23 @@ Commit: `git commit -m "sim-runtime: add ChildProcessBackend (spawn + handshake)
 
 Simpler version that doesn't spawn — just connects to an existing UDS. Same handshake flow. Commit: `git commit -m "sim-runtime: add ExternalSocketBackend"`.
 
-### Task 4.8: `runtime.rs` — the main public API
+### Task 4.8: `runtime.rs` — the main public API (SPLIT into 5 sub-steps)
+
+This task is the most complex integration in Chunk 4. Split into 5 sub-steps, each verified separately before committing together (or as a single commit at the end, depending on TDD rhythm). This mirrors Chunk 1 Task 1.4's split-to-mitigate-risk pattern.
+
+- [ ] **Step 1 (4.8a)**: Replace the stub `pub struct SimulationRuntime;` in `src/runtime.rs` with the real field-bearing struct. Do not add any methods yet. Verify `cargo build -p sim-runtime` still passes (proves the field types resolve).
+
+- [ ] **Step 2 (4.8b)**: Add `SimulationRuntime::start(normfs, engine, config)` that uses `ChildProcessBackend` / `ExternalSocketBackend` dispatch, performs handshake, builds `WorldRegistry`, `SnapshotBroker`, `ActuationSender`, `HealthPublisher`, and publishes `WorldDescriptor` to `/sim/descriptor`. Do NOT add the dispatch task yet. Test: use `MockBackend` via a test-only `start_with_backend` constructor (added in 4.8e) to verify handshake happy path reaches `Ok(SimulationRuntime)`.
+
+- [ ] **Step 3 (4.8c)**: Add the dispatch loop — `tokio::spawn` that reads `inbound_rx`, routes `Envelope::Snapshot` to broker, `Envelope::Error` to log, other payloads ignored. Verify by injecting a snapshot through `MockBackend` and observing it arrive at a `subscribe_snapshots()` receiver.
+
+- [ ] **Step 4 (4.8d)**: Add public methods: `world_descriptor()`, `subscribe_snapshots()`, `send_actuation(batch)`, `subscribe_health()`, and `shutdown()`. Each method is 3-5 lines of delegation. Commit each with the corresponding unit test (or a combined commit for all five).
+
+- [ ] **Step 5 (4.8e)**: Add `#[cfg(test)] pub(crate) async fn start_with_backend(normfs, backend: Box<dyn WorldBackend>, session_id) -> Result<Arc<Self>, _>`. This test-only constructor skips the `SimRuntimeConfig` dispatch and accepts any backend (typically `MockBackend`). It's used by Task 4.9 integration tests. Remove any `todo!()` stubs from earlier sub-steps.
+
+After all 5 sub-steps pass, commit as a single logical unit: `git commit -m "sim-runtime: implement SimulationRuntime public API (5-substep split)"`.
+
+Full reference implementation:
 
 ```rust
 // software/sim-runtime/src/runtime.rs
@@ -4111,33 +4331,94 @@ Commit: `git commit -m "sim-server: add ipc.framing with 1MB boundary test"`.
 
 ### Task 6.2: `ipc/codec.py`
 
-Wrap the generated `norma_sim.world.v1.Envelope` protobuf:
+**Before writing codec.py, run these verification commands to discover the generated proto import path** — do not trust placeholders:
+
+```bash
+# Step 1: Ensure proto files are generated
+make protobuf
+
+# Step 2: Find where the sim/world proto landed in the Python output
+find target -path "*sim*world*" -name "*.py" 2>/dev/null
+# Expected output: something like
+#   target/gen_python/protobuf/sim/world_pb2.py
+#   target/gen_python/protobuf/sim/world.py
+# Note the exact directory structure.
+
+# Step 3: Discover how existing station_py imports generated protos for reference:
+grep -rn "from.*target.gen_python" software/station/shared/station_py/ 2>/dev/null | head -5
+# Expected: something like
+#   from target.gen_python.protobuf.station import commands
+#   from target.gen_python.protobuf.drivers.st3215 import st3215
+
+# Step 4: Verify importable — run from repo root so PYTHONPATH includes target/gen_python
+PYTHONPATH=target/gen_python python3 -c "
+from protobuf.sim import world
+print('World proto loaded from:', world.__file__)
+print('Has Envelope:', hasattr(world, 'Envelope'))
+print('Has Hello:', hasattr(world, 'Hello'))
+"
+```
+
+Once the exact import path is confirmed, write `codec.py`:
 
 ```python
 # software/sim-server/norma_sim/ipc/codec.py
-"""Envelope encode/decode helpers wrapping the generated protobuf."""
-# NOTE: The generated Python proto module path depends on where
-# make protobuf places it. Common outputs: target/gen_python/protobuf/sim/world_pb2.py
-# The test fixture needs to resolve this; if the import path is unusual,
-# add a site-packages symlink or adjust sys.path in conftest.py.
-from norma_sim.world.v1 import Envelope  # adjust import path if make protobuf produces different naming
+"""Envelope encode/decode helpers wrapping the generated protobuf.
+
+The generated protobuf module lives under target/gen_python/protobuf/sim/
+(produced by `make protobuf` via gremlin_py). For local development, ensure
+target/gen_python is on PYTHONPATH. The sim-server's pyproject.toml does NOT
+vendor the generated code — it's a build artifact.
+"""
+# Import path confirmed via the verification commands above. Adjust if your
+# make protobuf produces a different layout.
+from protobuf.sim import world as world_pb2
 
 
-def encode_envelope(env: "Envelope") -> bytes:
+def encode_envelope(env: "world_pb2.Envelope") -> bytes:
     return env.SerializeToString()
 
 
-def decode_envelope(data: bytes) -> "Envelope":
-    env = Envelope()
+def decode_envelope(data: bytes) -> "world_pb2.Envelope":
+    env = world_pb2.Envelope()
     env.ParseFromString(data)
     return env
+
+
+# Convenience re-exports so higher-level ipc modules don't need to know about
+# the generated module's actual path. If the path changes, only this file
+# needs updating.
+Envelope = world_pb2.Envelope
+Hello = world_pb2.Hello
+Welcome = world_pb2.Welcome
+ActuationBatch = world_pb2.ActuationBatch
+WorldSnapshot = world_pb2.WorldSnapshot
+Goodbye = world_pb2.Goodbye
+Error = world_pb2.Error
+# ... re-export all top-level message types used by session.py and server.py
 ```
 
-**Important note**: the import path for the generated proto depends on how `make protobuf` configures gremlin_py output. Verify by inspecting `Makefile`'s `protobuf` target and the existing generated Python files (e.g., where `station_py` imports `ST3215` protos). Adjust the import accordingly.
+**tests/conftest.py update**: add a fixture that injects `target/gen_python` into `sys.path` if not already there, so imports work when pytest is run from any cwd:
 
-Tests: roundtrip Hello / Welcome / Goodbye envelopes.
+```python
+# In tests/conftest.py, add near the top
+import sys
+from pathlib import Path
 
-Commit: `git commit -m "sim-server: add ipc.codec Envelope encode/decode"`.
+def _ensure_proto_path():
+    repo_root = Path(__file__).resolve().parents[3]
+    gen_path = repo_root / "target" / "gen_python"
+    if gen_path.exists() and str(gen_path) not in sys.path:
+        sys.path.insert(0, str(gen_path))
+
+_ensure_proto_path()
+```
+
+**ipc/session.py and ipc/server.py use the re-exports**: they `from norma_sim.ipc.codec import Envelope, Hello, Welcome, Error` instead of reaching into the generated protobuf module directly. This way, Task 6.3's session.py code works regardless of the exact generated proto path.
+
+Tests: roundtrip Hello / Welcome / Goodbye envelopes via `encode_envelope` → `decode_envelope`.
+
+Commit: `git commit -m "sim-server: add ipc.codec with verified proto import path + conftest sys.path shim"`.
 
 ### Task 6.3: `ipc/session.py` — per-client handshake + reader/writer
 
@@ -4198,8 +4479,9 @@ class ClientSession:
             raise ValueError("expected Hello")
         hello = env.hello
         if hello.protocol_version != PROTOCOL_VERSION:
-            # Send Error and close
-            from norma_sim.world.v1 import Error, Envelope
+            # Send Error and close. Use the re-exports from codec.py rather
+            # than reaching into the generated protobuf module directly.
+            from .codec import Envelope, Error
             err_env = Envelope()
             err_env.error.code = Error.E_PROTOCOL_VERSION
             err_env.error.message = f"server version {PROTOCOL_VERSION}, client {hello.protocol_version}"
@@ -4207,7 +4489,7 @@ class ClientSession:
             raise ValueError("protocol version mismatch")
 
         # Send Welcome with descriptor
-        from norma_sim.world.v1 import Envelope
+        from .codec import Envelope
         welcome_env = Envelope()
         welcome_env.welcome.protocol_version = PROTOCOL_VERSION
         welcome_env.welcome.world.CopyFrom(self.descriptor)
@@ -4235,7 +4517,7 @@ class ClientSession:
             snapshot = await self.snapshot_queue.get()
             if snapshot is None:
                 return
-            from norma_sim.world.v1 import Envelope
+            from .codec import Envelope
             env = Envelope()
             env.snapshot.CopyFrom(snapshot)
             await write_frame(self.writer, encode_envelope(env))
@@ -4550,28 +4832,38 @@ No commit.
 # software/sim-bridges/st3215-compat-bridge/Cargo.toml
 [package]
 name = "st3215-compat-bridge"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Bidirectional bridge between legacy ST3215 queues and generic SimulationRuntime."
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+# Workspace-shared deps
+tokio = { workspace = true }
+normfs = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+log = { workspace = true }
+# Direct deps
 thiserror = "1"
-log = "0.4"
-bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
-prost = "0.12"
 
+# Path deps — sibling crates in the workspace
 sim-runtime = { path = "../../sim-runtime" }
 st3215-wire = { path = "../../drivers/st3215-wire" }
-station-iface = { path = "../../station/shared/station-iface" }
-normfs = { path = "../../normfs" }  # adjust path
-# st3215 proto types for StationCommand filtering + st3215 Command decoding
+station_iface = { path = "../../station/shared/station-iface" }
+
+# Non-obvious dep: st3215 real-driver crate for the st3215_proto::Command
+# type used in the command_task translation. The bridge only needs the
+# generated protobuf types (`st3215::st3215_proto`), but Cargo pulls in the
+# entire crate including its tokio_serial transitive dep. This is acceptable
+# because the compile-time cost is bounded and the alternative (extracting
+# st3215_proto to its own crate) is out of scope for MVP-1.
 st3215 = { path = "../../drivers/st3215" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full", "test-util"] }
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
 ```
 
 Create `src/lib.rs` with module declarations + empty stubs (pattern from Chunk 2 Task 2.1).
@@ -4816,6 +5108,43 @@ Commit: `git commit -m "st3215-compat-bridge: add ActuatorMap"`.
 
 This is the most important task in Chunk 7. It must mirror the real `st3215/driver.rs:74-112` command decoding logic exactly, then translate to generic `ActuationCommand`.
 
+**Verified protobuf shapes** (from `protobufs/drivers/st3215/st3215.proto`):
+
+```proto
+message Command {
+  string target_bus_serial = 1;
+  ST3215WriteCommand       write              = 10;
+  ST3215RegWriteCommand    reg_write          = 11;
+  ST3215ActionCommand      action             = 12;
+  ST3215ResetCommand       reset              = 13;
+  ResetCalibrationCommand  reset_calibration  = 14;
+  FreezeCalibrationCommand freeze_calibration = 15;
+  ST3215SyncWriteCommand   sync_write         = 16;
+  AutoCalibrateCommand     auto_calibrate     = 17;
+  StopAutoCalibrateCommand stop_auto_calibrate = 18;
+}
+message ST3215WriteCommand {
+  uint32 motor_id  = 1;   // SINGLE motor (not repeated!)
+  uint32 address   = 2;
+  bytes  value     = 3;
+}
+message ST3215SyncWriteCommand {
+  message MotorWrite { uint32 motor_id = 1; bytes value = 2; }
+  uint32 address = 1;
+  repeated MotorWrite motors = 2;  // multi-motor form
+}
+message ST3215ResetCommand {
+  string port_name = 1;
+  uint32 motor_id  = 2;   // SINGLE motor
+}
+```
+
+**Verified Rust module path**: the generated type is `st3215::st3215_proto::Command` (the real `st3215` crate's `lib.rs:4` declares `pub mod st3215_proto { include!("proto/st3215.rs"); }`). **It is NOT `st3215::proto::Command`** — that path does not exist.
+
+**Verified register access**: `st3215-wire::RamRegister` uses a `define_register_enum!` macro (`software/drivers/st3215/src/protocol/memory.rs:1-42`). The enum does NOT derive `#[repr(u16)]` — variants have no explicit discriminants. Use the generated `.address()` method (returns `u8`) instead of `as u16`:
+- **Wrong**: `write.addr as u16 == RamRegister::GoalPosition as u16` (returns variant index, not byte address)
+- **Right**: `write.address as u8 == RamRegister::GoalPosition.address()`
+
 ```rust
 // software/sim-bridges/st3215-compat-bridge/src/command_task.rs
 use crate::actuator_map::ActuatorMap;
@@ -4826,21 +5155,19 @@ use normfs::NormFS;
 use prost::Message;
 use sim_runtime::proto::{
     actuation_command::Intent, ActuationBatch, ActuationCommand, ActuatorRef,
-    DisableTorque, EnableTorque, QosLane, SetPosition,
+    DisableTorque, EnableTorque, QosLane, ResetActuator, SetPosition,
 };
 use sim_runtime::SimulationRuntime;
 use station_iface::{iface_proto::{commands, drivers}, COMMANDS_QUEUE_ID};
+use st3215::st3215_proto::Command as StCommand;
+use st3215_wire::register::RamRegister;
 use std::sync::Arc;
 
-/// Spawn the command task. It subscribes to the global `commands` queue
-/// (NOT a made-up `st3215/commands` name) and filters by
-/// StationCommandType::StcSt3215Command + target_bus_serial, exactly mirroring
-/// the real driver's subscription in st3215/driver.rs:69-113.
 pub async fn spawn_command_task(
     normfs: Arc<NormFS>,
     sim_runtime: Arc<SimulationRuntime>,
     actuator_map: Arc<ActuatorMap>,
-    preset: Arc<RobotPreset>,
+    _preset: Arc<RobotPreset>,
     robot_id: String,
     legacy_bus_serial: String,
 ) -> Result<(), BridgeError> {
@@ -4848,7 +5175,6 @@ pub async fn spawn_command_task(
 
     let rt_clone = sim_runtime.clone();
     let map_clone = actuator_map.clone();
-    let preset_clone = preset.clone();
     let bus_serial_clone = legacy_bus_serial.clone();
     let robot_id_clone = robot_id.clone();
 
@@ -4865,24 +5191,28 @@ pub async fn spawn_command_task(
                     }
                 };
                 for cmd in &pack.commands {
-                    // Exactly mirror real driver's filter
+                    // Exactly mirror real driver's filter (st3215/driver.rs:77)
                     if cmd.r#type() != drivers::StationCommandType::StcSt3215Command {
                         continue;
                     }
-                    let st_cmd = match st3215::proto::Command::decode(cmd.body.clone()) {
+                    let st_cmd = match StCommand::decode(cmd.body.clone()) {
                         Ok(c) => c,
                         Err(e) => {
                             log::warn!(target: "st3215_compat_bridge::command_task",
-                                "decode ST3215 Command: {}", e);
+                                "decode st3215_proto::Command: {}", e);
                             continue;
                         }
                     };
-                    // Filter by target_bus_serial: only pick commands for OUR sim bus
+                    // Filter by target_bus_serial. This filter is required here
+                    // because the bridge is the ONLY translator between the legacy
+                    // `commands` queue and its specific sim bus. In shadow mode,
+                    // the real st3215 driver and the bridge both subscribe to the
+                    // same `commands` queue; without this filter, the bridge would
+                    // duplicate the real driver's work.
                     if st_cmd.target_bus_serial != bus_serial_clone {
                         continue;
                     }
-                    // Translate to ActuationBatch
-                    let batch = match translate_command(&st_cmd, &map_clone, &preset_clone, &robot_id_clone) {
+                    let batch = match translate_command(&st_cmd, &map_clone, &robot_id_clone) {
                         Ok(b) => b,
                         Err(e) => {
                             log::warn!(target: "st3215_compat_bridge::command_task",
@@ -4890,6 +5220,9 @@ pub async fn spawn_command_task(
                             continue;
                         }
                     };
+                    if batch.commands.is_empty() {
+                        continue;  // unhandled address, nothing to send
+                    }
                     let rt = rt_clone.clone();
                     tokio::spawn(async move {
                         if let Err(e) = rt.send_actuation(batch).await {
@@ -4907,78 +5240,80 @@ pub async fn spawn_command_task(
 }
 
 fn translate_command(
-    cmd: &st3215::proto::Command,
+    cmd: &StCommand,
     actuator_map: &ActuatorMap,
-    preset: &RobotPreset,
     robot_id: &str,
 ) -> Result<ActuationBatch, BridgeError> {
     let mut actuation_commands: Vec<ActuationCommand> = Vec::new();
     let mut lane = QosLane::LossySetpoint;
 
-    // Handle write command (set goal position / torque enable)
+    // --- write: single motor_id + single address + single value ---
     if let Some(write) = &cmd.write {
-        let addr = write.addr as u16;
-        if addr == st3215_wire::RamRegister::GoalPosition as u16 {
-            // SetPosition commands
-            for motor_data in &write.data {
-                let motor_id = motor_data.motor_id as u8;
-                let entry = actuator_map.get_by_motor_id(motor_id)
-                    .ok_or_else(|| BridgeError::UnknownMotorId(motor_id))?;
+        let motor_id = write.motor_id as u8;
+        let addr = write.address as u8;
+        let entry = actuator_map.get_by_motor_id(motor_id)
+            .ok_or(BridgeError::UnknownMotorId(motor_id))?;
+
+        if addr == RamRegister::GoalPosition.address() {
+            let steps = u16::from_le_bytes([
+                write.value.get(0).copied().unwrap_or(0),
+                write.value.get(1).copied().unwrap_or(0),
+            ]);
+            let rad = st3215_wire::units::steps_to_rad(steps, entry.offset_steps);
+            actuation_commands.push(build_set_position(robot_id, &entry.actuator_id, rad));
+        } else if addr == RamRegister::TorqueEnable.address() {
+            lane = QosLane::ReliableControl;
+            let enabled = write.value.first().copied().unwrap_or(0) != 0;
+            actuation_commands.push(build_torque(robot_id, &entry.actuator_id, enabled));
+        }
+        // Unrecognized addresses are silently skipped in MVP-1.
+    }
+
+    // --- sync_write: single address + repeated per-motor values ---
+    if let Some(sync) = &cmd.sync_write {
+        let addr = sync.address as u8;
+        if addr == RamRegister::GoalPosition.address() {
+            for motor_write in &sync.motors {
+                let motor_id = motor_write.motor_id as u8;
+                let Some(entry) = actuator_map.get_by_motor_id(motor_id) else {
+                    log::warn!(target: "st3215_compat_bridge::command_task",
+                        "sync_write: unknown motor_id {}, skipping", motor_id);
+                    continue;
+                };
                 let steps = u16::from_le_bytes([
-                    motor_data.data.get(0).copied().unwrap_or(0),
-                    motor_data.data.get(1).copied().unwrap_or(0),
+                    motor_write.value.get(0).copied().unwrap_or(0),
+                    motor_write.value.get(1).copied().unwrap_or(0),
                 ]);
                 let rad = st3215_wire::units::steps_to_rad(steps, entry.offset_steps);
-                actuation_commands.push(ActuationCommand {
-                    r#ref: Some(ActuatorRef {
-                        robot_id: robot_id.to_string(),
-                        actuator_id: entry.actuator_id.clone(),
-                    }),
-                    intent: Some(Intent::SetPosition(SetPosition {
-                        value: rad as f64,
-                        max_velocity: 0.0,
-                    })),
-                });
+                actuation_commands.push(build_set_position(robot_id, &entry.actuator_id, rad));
             }
-        } else if addr == st3215_wire::RamRegister::TorqueEnable as u16 {
-            // EnableTorque / DisableTorque — discrete, reliable lane
+        } else if addr == RamRegister::TorqueEnable.address() {
             lane = QosLane::ReliableControl;
-            for motor_data in &write.data {
-                let motor_id = motor_data.motor_id as u8;
-                let entry = actuator_map.get_by_motor_id(motor_id)
-                    .ok_or_else(|| BridgeError::UnknownMotorId(motor_id))?;
-                let enabled = motor_data.data.first().copied().unwrap_or(0) != 0;
-                actuation_commands.push(ActuationCommand {
-                    r#ref: Some(ActuatorRef {
-                        robot_id: robot_id.to_string(),
-                        actuator_id: entry.actuator_id.clone(),
-                    }),
-                    intent: Some(if enabled {
-                        Intent::EnableTorque(EnableTorque {})
-                    } else {
-                        Intent::DisableTorque(DisableTorque {})
-                    }),
-                });
+            for motor_write in &sync.motors {
+                let motor_id = motor_write.motor_id as u8;
+                let Some(entry) = actuator_map.get_by_motor_id(motor_id) else { continue; };
+                let enabled = motor_write.value.first().copied().unwrap_or(0) != 0;
+                actuation_commands.push(build_torque(robot_id, &entry.actuator_id, enabled));
             }
         }
     }
 
-    // Handle reset — reliable lane
-    if cmd.reset.is_some() {
+    // --- reset: single motor ---
+    if let Some(reset) = &cmd.reset {
         lane = QosLane::ReliableControl;
-        // Reset all known motors
-        for entry in actuator_map.by_motor_id.values() {
+        let motor_id = reset.motor_id as u8;
+        if let Some(entry) = actuator_map.get_by_motor_id(motor_id) {
             actuation_commands.push(ActuationCommand {
                 r#ref: Some(ActuatorRef {
                     robot_id: robot_id.to_string(),
                     actuator_id: entry.actuator_id.clone(),
                 }),
-                intent: Some(Intent::ResetActuator(sim_runtime::proto::ResetActuator {})),
+                intent: Some(Intent::ResetActuator(ResetActuator {})),
             });
         }
     }
 
-    // TODO: handle sync_write, reg_write similarly for MVP-2
+    // reg_write / action / calibration commands: MVP-1 not supported (defer to MVP-2)
 
     Ok(ActuationBatch {
         as_of: None,
@@ -4987,10 +5322,38 @@ fn translate_command(
     })
 }
 
+fn build_set_position(robot_id: &str, actuator_id: &str, rad: f32) -> ActuationCommand {
+    ActuationCommand {
+        r#ref: Some(ActuatorRef {
+            robot_id: robot_id.to_string(),
+            actuator_id: actuator_id.to_string(),
+        }),
+        intent: Some(Intent::SetPosition(SetPosition {
+            value: rad as f64,
+            max_velocity: 0.0,
+        })),
+    }
+}
+
+fn build_torque(robot_id: &str, actuator_id: &str, enabled: bool) -> ActuationCommand {
+    ActuationCommand {
+        r#ref: Some(ActuatorRef {
+            robot_id: robot_id.to_string(),
+            actuator_id: actuator_id.to_string(),
+        }),
+        intent: Some(if enabled {
+            Intent::EnableTorque(EnableTorque {})
+        } else {
+            Intent::DisableTorque(DisableTorque {})
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::preset_loader::{MotorEntry, RobotPreset};
+    use st3215::st3215_proto::{Command as StCmd, St3215SyncWriteCommand, St3215WriteCommand, st3215_sync_write_command::MotorWrite};
 
     fn test_preset() -> RobotPreset {
         RobotPreset {
@@ -5008,33 +5371,121 @@ mod tests {
         }
     }
 
+    fn make_write(motor_id: u32, address: u32, value: Vec<u8>) -> StCmd {
+        StCmd {
+            target_bus_serial: "sim://bus0".into(),
+            write: Some(St3215WriteCommand { motor_id, address, value }),
+            reg_write: None,
+            action: None,
+            reset: None,
+            reset_calibration: None,
+            freeze_calibration: None,
+            sync_write: None,
+            auto_calibrate: None,
+            stop_auto_calibrate: None,
+        }
+    }
+
     #[test]
-    fn test_translate_setpos() {
-        // Build a fake st3215::proto::Command with write.addr = GoalPosition
-        // and one motor's data = rad_to_steps(0.5, 2048) as le_bytes
-        // Assert the translated ActuationBatch has one SetPosition intent
-        // with value ≈ 0.5.
-        // Elided for brevity; implementer fills from the structure above.
+    fn test_translate_set_position_single_motor() {
+        let preset = test_preset();
+        let map = ActuatorMap::from_preset(&preset);
+        // rad_to_steps(0.5, 2048) ≈ 2374; encode little-endian
+        let target_steps = st3215_wire::units::rad_to_steps(0.5, 2048);
+        let steps_bytes = target_steps.to_le_bytes().to_vec();
+
+        let cmd = make_write(1, RamRegister::GoalPosition.address() as u32, steps_bytes);
+        let batch = translate_command(&cmd, &map, "elrobot_follower").unwrap();
+
+        assert_eq!(batch.commands.len(), 1);
+        assert_eq!(batch.lane, QosLane::LossySetpoint as i32);
+        let c = &batch.commands[0];
+        let r = c.r#ref.as_ref().unwrap();
+        assert_eq!(r.robot_id, "elrobot_follower");
+        assert_eq!(r.actuator_id, "rev_motor_01");
+        match &c.intent {
+            Some(Intent::SetPosition(sp)) => {
+                assert!((sp.value - 0.5).abs() < 0.002, "sp.value = {}", sp.value);
+            }
+            other => panic!("expected SetPosition, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_translate_torque_enable_uses_reliable_lane() {
-        // write.addr = TorqueEnable, data = [1]
-        // Assert resulting batch.lane == QosLane::ReliableControl
-        // and intent is EnableTorque.
+        let preset = test_preset();
+        let map = ActuatorMap::from_preset(&preset);
+        let cmd = make_write(1, RamRegister::TorqueEnable.address() as u32, vec![1u8]);
+        let batch = translate_command(&cmd, &map, "elrobot_follower").unwrap();
+        assert_eq!(batch.lane, QosLane::ReliableControl as i32);
+        assert_eq!(batch.commands.len(), 1);
+        assert!(matches!(&batch.commands[0].intent, Some(Intent::EnableTorque(_))));
+    }
+
+    #[test]
+    fn test_translate_torque_disable() {
+        let preset = test_preset();
+        let map = ActuatorMap::from_preset(&preset);
+        let cmd = make_write(1, RamRegister::TorqueEnable.address() as u32, vec![0u8]);
+        let batch = translate_command(&cmd, &map, "elrobot_follower").unwrap();
+        assert_eq!(batch.lane, QosLane::ReliableControl as i32);
+        assert!(matches!(&batch.commands[0].intent, Some(Intent::DisableTorque(_))));
     }
 
     #[test]
     fn test_translate_unknown_motor_id_errors() {
-        // motor_id = 99 (not in preset)
-        // Assert Err(BridgeError::UnknownMotorId(99))
+        let preset = test_preset();
+        let map = ActuatorMap::from_preset(&preset);
+        let cmd = make_write(99, RamRegister::GoalPosition.address() as u32, vec![0u8; 2]);
+        assert!(matches!(
+            translate_command(&cmd, &map, "elrobot_follower"),
+            Err(BridgeError::UnknownMotorId(99))
+        ));
+    }
+
+    #[test]
+    fn test_translate_sync_write_multi_motor() {
+        // Build a two-motor preset
+        let mut preset = test_preset();
+        preset.motors.push(MotorEntry {
+            actuator_id: "rev_motor_02".into(),
+            motor_id: 2,
+            min_angle_steps: 0,
+            max_angle_steps: 4095,
+            offset_steps: 2048,
+            torque_limit: 500,
+            voltage_nominal_v: 12.0,
+        });
+        let map = ActuatorMap::from_preset(&preset);
+        let steps = st3215_wire::units::rad_to_steps(0.25, 2048).to_le_bytes().to_vec();
+        let cmd = StCmd {
+            target_bus_serial: "sim://bus0".into(),
+            write: None,
+            reg_write: None,
+            action: None,
+            reset: None,
+            reset_calibration: None,
+            freeze_calibration: None,
+            sync_write: Some(St3215SyncWriteCommand {
+                address: RamRegister::GoalPosition.address() as u32,
+                motors: vec![
+                    MotorWrite { motor_id: 1, value: steps.clone() },
+                    MotorWrite { motor_id: 2, value: steps },
+                ],
+            }),
+            auto_calibrate: None,
+            stop_auto_calibrate: None,
+        };
+        let batch = translate_command(&cmd, &map, "elrobot_follower").unwrap();
+        assert_eq!(batch.commands.len(), 2);
+        assert_eq!(batch.lane, QosLane::LossySetpoint as i32);
     }
 }
 ```
 
-**Key verification**: the exact field names in `st3215::proto::Command` (`write`, `reset`, `sync_write`, `reg_write`, `target_bus_serial`, etc.) must be verified against `protobufs/drivers/st3215/st3215.proto` before the code is correct. Cross-reference with how `st3215/driver.rs:74-112` uses these fields.
+**Note**: Exact type names for `St3215SyncWriteCommand::MotorWrite` may be `st3215_sync_write_command::MotorWrite` (prost nests inner-message types as lowercase modules). Verify by inspecting `st3215/src/proto/st3215.rs` after `make protobuf` and adjust imports if needed.
 
-Commit: `git commit -m "st3215-compat-bridge: add command_task (subscribes global commands queue, filters by StcSt3215Command + target_bus_serial)"`.
+Commit: `git commit -m "st3215-compat-bridge: add command_task with verified protobuf shapes + translation tests"`.
 
 ### Task 7.6: `state_task.rs`
 
@@ -5233,7 +5684,10 @@ pub struct Config {
     #[serde(rename = "cloud-offload", skip_serializing_if = "Option::is_none")]
     pub cloud_offload: Option<CloudOffloadConfig>,
 
-    // ✨ new (added in Chunk 3 Task 3.2)
+    // ✨ new: the field is added HERE (Chunk 8 Task 8.1). The types
+    // SimRuntimeConfig / SimMode / LogCapture were added in Chunk 3 Task 3.2
+    // to station-iface so that both station-iface and sim-runtime can share
+    // them without creating a circular crate dep.
     #[serde(rename = "sim-runtime", default, skip_serializing_if = "Option::is_none")]
     pub sim_runtime: Option<SimRuntimeConfig>,
 
@@ -5486,6 +5940,8 @@ check-arch-invariants:
 	  echo "FAIL: st3215-wire has forbidden I/O dependency"; exit 1; fi
 	@if grep -q "^pub trait WorldBackend" software/sim-runtime/src/backend/mod.rs; then \
 	  echo "FAIL: WorldBackend trait must be pub(crate), not pub"; exit 1; fi
+	@if cargo tree -p sim-runtime 2>/dev/null | grep -q "^[^a-zA-Z]*st3215-wire"; then \
+	  echo "FAIL: sim-runtime transitively depends on st3215-wire"; exit 1; fi
 	@echo "All architecture invariants hold ✓"
 ```
 
@@ -5522,6 +5978,11 @@ use normfs::NormFS;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_legacy_station_py_commands_flow_through_bridge() {
+    // Verified against protobufs/drivers/st3215/st3215.proto (commit d043f2e):
+    //   st3215::st3215_proto::Command (NOT st3215::proto::Command)
+    //   ST3215WriteCommand { motor_id: u32, address: u32, value: Bytes } — SINGLE motor
+    //   RamRegister::GoalPosition.address() → u8 byte address (NOT `as u16`)
+    //
     // 1. Build a tempdir-backed NormFS + a concrete StationEngine impl
     //    (or an in-memory one for tests)
     // 2. Build a MockBackend for sim-runtime with a canned WorldDescriptor
@@ -5530,17 +5991,19 @@ async fn test_legacy_station_py_commands_flow_through_bridge() {
     // 4. Call start_st3215_compat_bridge with a test preset
     // 5. Construct a StationCommandsPack with one command:
     //      type = StcSt3215Command,
-    //      body = st3215::proto::Command {
-    //        target_bus_serial: "sim://bus0",
-    //        write: Some(WriteCommand {
-    //          addr: RamRegister::GoalPosition as u16,
-    //          data: vec![MotorData { motor_id: 1, data: rad_to_steps(0.5, 2048).to_le_bytes() }],
-    //          ..
+    //      body = st3215::st3215_proto::Command {
+    //        target_bus_serial: "sim://bus0".into(),
+    //        write: Some(St3215WriteCommand {
+    //          motor_id: 1,
+    //          address: st3215_wire::register::RamRegister::GoalPosition.address() as u32,
+    //          value: st3215_wire::units::rad_to_steps(0.5, 2048).to_le_bytes().to_vec(),
     //        }),
-    //        ..
+    //        reg_write: None, action: None, reset: None,
+    //        reset_calibration: None, freeze_calibration: None,
+    //        sync_write: None, auto_calibrate: None, stop_auto_calibrate: None,
     //      }
-    // 6. Write the pack to the global "commands" queue via NormFS
-    // 7. Observe the MockBackend's outbound channel (via outbound_observer)
+    // 6. Write the pack to the global "commands" queue via NormFS (enqueue, NOT write)
+    // 7. Observe the MockBackend's outbound_observer channel
     // 8. Assert that within 1s, an Envelope arrived with an ActuationBatch
     //    containing one ActuationCommand with:
     //      - ref.robot_id = "elrobot_follower"
