@@ -1822,25 +1822,3841 @@ When all boxes are checked, Chunk 1 is complete. Proceed to plan-document-review
 
 ---
 
-## Chunks 2-8
+## Chunks 2-8 — Detailed plans added in the batched pass
 
-Chunks 2 through 8 are drafted after Chunk 1 passes the plan-document-reviewer loop. Writing all 8 chunks up front risks accumulating errors in later chunks that depend on decisions made in earlier chunks. Instead, Chunks 2-8 are added to this file one at a time, each after the prior chunk's reviewer cycle is green.
+The sections below cover Chunks 2 through 8. Each chunk follows the same pattern as Chunk 1: tasks with file paths, TDD-style sub-steps, exact commands, verification assertions, and commit instructions. Because of the cumulative size, Chunks 2-8 are written at slightly higher granularity than Chunk 1 — the implementer still gets exact file paths and key code snippets, but routine scaffolding (Cargo.toml boilerplate, trivial test harnesses) is referenced to the spec instead of fully inlined.
 
-**Planned chunks (brief — full content added later):**
+**Cross-chunk review**: after all Chunks 2-8 are written, a single plan-document-reviewer pass covers them collectively (see "Plan Review Loop" section below).
 
-- **Chunk 2: `st3215-wire` crate** — Create new pure-protocol crate by migrating `st3215/src/protocol/memory.rs + units.rs` and `st3215/src/port.rs` parsing logic into `st3215-wire/src/{register,layout,units,unpack}.rs`. Add new `pack.rs` (~120 lines) with pack↔unpack roundtrip test. Update real `st3215` driver to depend on `st3215-wire` and use its types via `use` statements. Real driver logic unchanged; existing tests are regression guards.
+**See the dedicated chunk sections below for the full content.**
 
-- **Chunk 3: `sim-runtime` crate foundation** — Create new crate `software/sim-runtime/` with `Cargo.toml` + `build.rs` (prost_build for world.proto). Implement: `config.rs` (SimRuntimeConfig), `errors.rs`, `clock.rs` (WorldClock helpers), `backend/mod.rs` (WorldBackend trait `pub(crate)`), `backend/mock.rs` (MockBackend test-only), `backend/runtime_dir.rs` (TempRuntimeDir RAII), `backend/transport.rs` (UnixSocketTransport shared helper), `ipc/{framing,codec,handshake}.rs`. No SimulationRuntime public API yet — that's Chunk 4. Tests: framing roundtrip, envelope codec, handshake happy/mismatch via MockBackend.
+---
 
-- **Chunk 4: `sim-runtime` crate subsystem** — Implement the main subsystem using Chunk 3's foundation. `runtime.rs` (SimulationRuntime::start / shutdown / subscribe_snapshots / send_actuation / subscribe_health), `backend/child_process.rs`, `backend/external_socket.rs`, `snapshot_broker.rs` (tokio broadcast), `actuation_sender.rs` (QoS lane routing), `health.rs` (SimHealth publisher + `/sim/health` NormFS queue), `supervisor.rs` (wait_terminated task), `registry.rs` (ActuatorRegistry/SensorRegistry from WorldDescriptor), descriptor persistence to `/sim/descriptor` queue. Tests: backend crash broadcasts health, descriptor persisted, snapshot broker multi-subscriber, mjcf source_hash mismatch, clock monotonic.
+## Chunk 2: `st3215-wire` crate (pure protocol library)
 
-- **Chunk 5: `norma_sim` Python package — world + scheduler** — Create `software/sim-server/` with `pyproject.toml`. Implement `logging_setup.py`, `world/manifest.py`, `world/model.py`, `world/descriptor.py`, `world/capabilities.py` ★ (CAP_REVOLUTE / CAP_GRIPPER_PARALLEL unit conversions — single source of capability semantics), `world/actuation.py`, `world/snapshot.py`, `scheduler/base.py`, `scheduler/realtime.py`. Tests: manifest load happy/missing-gripper-fields, descriptor build, capabilities_revolute_identity, **capabilities_gripper_roundtrip** ★ P0, **mimic_gripper_equality_works** ★ P0, scheduler pacing, source_hash verification.
+**Purpose:** Extract the pure-protocol parts of the existing `st3215` driver (register layouts, unit conversions, parsing) into a new crate with zero tokio/normfs/station dependencies. Add the new `pack.rs` module (the one thing the Rust side of sim needs but the real driver doesn't). Update the real `st3215` driver to depend on `st3215-wire` and use its types via `use` statements; real driver logic unchanged.
 
-- **Chunk 6: `norma_sim` Python package — ipc + CLI** — Implement `ipc/framing.py`, `ipc/codec.py`, `ipc/session.py`, `ipc/server.py`, `cli.py`, `__main__.py`. Diagnostic scripts: `scripts/inspect.py`, `scripts/probe_manifest.py`, `scripts/send_actuation.py`. Tests: framing 1MB boundary, codec all variants, handshake happy/wrong-version/unknown-robot, full loop subprocess startup, **multi_client_fan_out** ★★ P0, subprocess clean shutdown.
+**Exit criteria:**
+- `software/drivers/st3215-wire/` exists as a workspace member
+- `cargo build -p st3215-wire` green
+- `cargo test -p st3215-wire` ≥ 11 tests pass (includes pack↔unpack roundtrip P0)
+- `cargo build -p st3215` succeeds with the new dependency
+- `cargo test -p st3215` all existing tests still pass (regression guard)
+- `grep -ri "tokio\|normfs\|station_iface\|StationEngine" software/drivers/st3215-wire/src/` empty
+- 7 commits
 
-- **Chunk 7: `st3215-compat-bridge` crate** — Create new crate `software/sim-bridges/st3215-compat-bridge/`. Implement `config.rs` (BridgeConfig), `preset_loader.rs` (with `sim://` prefix enforcement), `actuator_map.rs`, `command_task.rs` (subscribes global `commands` queue, filters by StcSt3215Command + target_bus_serial, translates to ActuationBatch), `state_task.rs` (subscribes WorldSnapshot, packs bytes via st3215-wire, writes `st3215/inference`), `health_task.rs` (subscribes SimHealth, writes offline marker to `st3215/meta`). Preset yaml data file. Tests: preset loader happy/invalid/sim-prefix-enforcement, actuator_map bidirectional, command_task setpos/torque/target_bus filter, state_task pack bytes, health_task offline marker, bridge startup failures (unknown robot, unknown actuator).
+### Task 2.1: Create `st3215-wire` crate skeleton
 
-- **Chunk 8: Station integration + config + E2E** — Modify `station-iface/src/config.rs` to add SimRuntimeConfig / Bridges / St3215CompatBridgeConfig + Config::validate(). Modify `main.rs` to insert ~80 lines for SimulationRuntime startup + bridge startup + ordered shutdown. Create `station-sim.yaml` / `station-sim-external.yaml` / `station-shadow.yaml`. Add Makefile targets (sim-install, sim-run, sim-standalone, sim-shadow, sim-test, check-arch-invariants). Update `.gitignore`. Rust cross-crate integration tests: **test_legacy_station_py_commands_flow_through_bridge** ★★★ P0, test_shadow_mode_target_bus_serial_routing. Run the full smoke-test checklist from spec §附录 A. Final commit.
+**Files:**
+- Create: `software/drivers/st3215-wire/Cargo.toml`
+- Create: `software/drivers/st3215-wire/src/{lib,register,layout,units,pack,unpack,presets}.rs`
+- Modify: `Cargo.toml` (workspace root)
+
+- [ ] **Step 1: Create Cargo.toml**
+
+```toml
+# software/drivers/st3215-wire/Cargo.toml
+[package]
+name = "st3215-wire"
+version = "0.1.0"
+edition = "2021"
+description = "Pure ST3215 servo protocol (wire format, register layout, pack/unpack). No I/O."
+
+[dependencies]
+bytes = "1"
+thiserror = "1"
+# Explicitly NO: tokio, normfs, station-iface, log. CI-enforced architecture invariant.
+```
+
+- [ ] **Step 2: Create src/lib.rs and stub modules**
+
+```rust
+// software/drivers/st3215-wire/src/lib.rs
+//! ST3215 Feetech servo protocol (pure, zero I/O).
+
+pub mod register;
+pub mod layout;
+pub mod units;
+pub mod pack;
+pub mod unpack;
+pub mod presets;
+
+pub use layout::{EEPROM_BYTES, RAM_BYTES, TOTAL_BYTES};
+pub use pack::{pack_state_bytes, MotorInstance, MotorSemanticState};
+pub use presets::{MotorModelSpec, ST3215_STANDARD};
+pub use register::{EepromRegister, RamRegister};
+pub use unpack::{unpack_state_bytes, UnpackError};
+```
+
+For the six submodule files, create each as a stub that compiles. Use the placeholder-types approach: minimal type definitions so `lib.rs`'s re-exports resolve. Example `register.rs`:
+
+```rust
+// src/register.rs (Task 2.1 stub; Task 2.2 fills in)
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EepromRegister { _Placeholder = 0 }
+
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RamRegister { _Placeholder = 0 }
+```
+
+Similar minimal stubs for `layout.rs` (export `pub const EEPROM_BYTES: usize = 40;` etc.), `units.rs` (empty), `pack.rs` (stub `MotorInstance`, `MotorSemanticState`, `pack_state_bytes` that `todo!()`), `unpack.rs` (stub `UnpackError`, `unpack_state_bytes`), `presets.rs` (stub `MotorModelSpec`, `ST3215_STANDARD` const).
+
+- [ ] **Step 3: Add to workspace + build**
+
+Edit root `Cargo.toml`, append `"software/drivers/st3215-wire"` to `[workspace] members`. Then:
+
+```bash
+cargo build -p st3215-wire 2>&1 | tail -20
+```
+
+Expected: exits 0 (warnings OK).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Cargo.toml software/drivers/st3215-wire/
+git commit -m "st3215-wire: add crate skeleton with placeholder modules"
+```
+
+### Task 2.2: Migrate `memory.rs` → `register.rs + layout.rs`
+
+**Files:**
+- Read: `software/drivers/st3215/src/protocol/memory.rs` (reference)
+- Replace: `software/drivers/st3215-wire/src/register.rs`
+- Replace: `software/drivers/st3215-wire/src/layout.rs`
+
+- [ ] **Step 1: Read the source**
+
+```bash
+cat software/drivers/st3215/src/protocol/memory.rs
+```
+
+Classify:
+- Enum definitions (`EepromRegister`, `RamRegister` with address values) → `register.rs`
+- Byte-layout constants (`EEPROM_BYTES=40`, `RAM_BYTES=31`, `TOTAL_BYTES=71`, `DEFAULT_EEPROM` table) → `layout.rs`
+- I/O / tokio / async methods → leave in `st3215`
+
+- [ ] **Step 2: Write `register.rs`** — transcribe the enum variants exactly. Every variant name and every `= 0xNN` address value must be preserved byte-for-byte.
+
+- [ ] **Step 3: Write `layout.rs`** — constants + `DEFAULT_EEPROM` table. Copy the exact byte values from the existing driver's equivalent (if the existing driver doesn't have a single table, synthesize from register defaults and note the source).
+
+- [ ] **Step 4: Verify build + regression diff**
+
+```bash
+cargo build -p st3215-wire 2>&1 | tail -10
+# Generate enum comparison snapshots
+grep -E "^\s*[A-Z][a-zA-Z]*\s*=" software/drivers/st3215/src/protocol/memory.rs > /tmp/old.txt
+grep -E "^\s*[A-Z][a-zA-Z]*\s*=" software/drivers/st3215-wire/src/register.rs > /tmp/new.txt
+diff /tmp/old.txt /tmp/new.txt
+```
+
+Expected: diff shows only cosmetic differences. Variant name or address mismatch = bug.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add software/drivers/st3215-wire/src/register.rs software/drivers/st3215-wire/src/layout.rs
+git commit -m "st3215-wire: migrate register enums + byte-layout constants from st3215"
+```
+
+### Task 2.3: Migrate `units.rs`
+
+**Files:**
+- Read: `software/drivers/st3215/src/protocol/units.rs`
+- Replace: `software/drivers/st3215-wire/src/units.rs`
+
+- [ ] **Step 1: Write `units.rs`**
+
+Transcribe the pure functions. Add missing helpers: `i16_to_sign_magnitude` (inverse of `sign_magnitude_to_i16` if not present).
+
+Example minimum content:
+
+```rust
+// software/drivers/st3215-wire/src/units.rs
+pub const STEPS_PER_REV: u32 = 4096;
+
+pub fn steps_to_rad(steps: u16, offset_steps: i16) -> f32 {
+    let centered = steps as i32 - offset_steps as i32;
+    (centered as f32) * (2.0 * std::f32::consts::PI / STEPS_PER_REV as f32)
+}
+
+pub fn rad_to_steps(rad: f32, offset_steps: i16) -> u16 {
+    let centered = rad / (2.0 * std::f32::consts::PI / STEPS_PER_REV as f32);
+    let raw = centered.round() as i32 + offset_steps as i32;
+    raw.clamp(0, (STEPS_PER_REV - 1) as i32) as u16
+}
+
+pub fn sign_magnitude_to_i16(raw: u16) -> i16 {
+    let magnitude = (raw & 0x7FFF) as i16;
+    if raw & 0x8000 != 0 { -magnitude } else { magnitude }
+}
+
+pub fn i16_to_sign_magnitude(value: i16) -> u16 {
+    if value >= 0 { value as u16 } else { ((-value) as u16) | 0x8000 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_steps_rad_roundtrip() {
+        let offset = 2048_i16;
+        for rad in [-1.5, -0.5, 0.0, 0.5, 1.5] {
+            let steps = rad_to_steps(rad, offset);
+            let back = steps_to_rad(steps, offset);
+            assert!((back - rad).abs() < 0.002);
+        }
+    }
+
+    #[test]
+    fn test_sign_magnitude_symmetric() {
+        for &v in &[-1000i16, -1, 0, 1, 1000] {
+            assert_eq!(sign_magnitude_to_i16(i16_to_sign_magnitude(v)), v);
+        }
+    }
+}
+```
+
+If the existing driver has additional functions (e.g., `load_to_nm`, `nm_to_load`), transcribe them verbatim.
+
+- [ ] **Step 2: Test + commit**
+
+```bash
+cargo test -p st3215-wire units::
+git add software/drivers/st3215-wire/src/units.rs
+git commit -m "st3215-wire: migrate unit conversions + add inverse helpers"
+```
+
+### Task 2.4: Extract parsing from `port.rs` → `unpack.rs`
+
+**Files:**
+- Read: `software/drivers/st3215/src/port.rs` (reference)
+- Replace: `software/drivers/st3215-wire/src/unpack.rs`
+
+Full implementation from spec §6.2 and Chunk 2 reference. Key:
+
+```rust
+// software/drivers/st3215-wire/src/unpack.rs
+use crate::layout::TOTAL_BYTES;
+use crate::pack::{MotorInstance, MotorSemanticState};
+use crate::presets::MotorModelSpec;
+use crate::units::{sign_magnitude_to_i16, steps_to_rad, STEPS_PER_REV};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum UnpackError {
+    #[error("buffer too short: expected {expected}, got {actual}")]
+    TooShort { expected: usize, actual: usize },
+    #[error("invalid model number {0}")]
+    ModelMismatch(u16),
+}
+
+pub fn unpack_state_bytes(
+    bytes: &[u8],
+    spec: &MotorModelSpec,
+    instance: &MotorInstance,
+) -> Result<MotorSemanticState, UnpackError> {
+    if bytes.len() < TOTAL_BYTES {
+        return Err(UnpackError::TooShort { expected: TOTAL_BYTES, actual: bytes.len() });
+    }
+    let model = u16::from_le_bytes([bytes[0x00], bytes[0x01]]);
+    if model != spec.model_number {
+        return Err(UnpackError::ModelMismatch(model));
+    }
+    // RAM segment starts at 0x28 (in the full dump). PresentPosition at 0x38.
+    let present_pos_raw = u16::from_le_bytes([bytes[0x38], bytes[0x39]]);
+    let present_speed_raw = u16::from_le_bytes([bytes[0x3A], bytes[0x3B]]);
+    let goal_pos_raw = u16::from_le_bytes([bytes[0x2A], bytes[0x2B]]);
+
+    let position_rad = steps_to_rad(present_pos_raw, instance.offset_steps);
+    let velocity_steps = sign_magnitude_to_i16(present_speed_raw);
+    let velocity_rad_s = (velocity_steps as f32) * (2.0 * std::f32::consts::PI / STEPS_PER_REV as f32);
+    let goal_position_rad = steps_to_rad(goal_pos_raw, instance.offset_steps);
+
+    Ok(MotorSemanticState {
+        position_rad,
+        velocity_rad_s,
+        load_nm: 0.0,  // refine in future
+        temperature_c: bytes[0x3F] as f32,
+        torque_enabled: bytes[0x28] != 0,
+        moving: bytes[0x42] != 0,
+        goal_position_rad,
+        goal_speed_rad_s: 0.0,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::presets::ST3215_STANDARD;
+
+    #[test]
+    fn test_unpack_too_short() {
+        let err = unpack_state_bytes(
+            &[0u8; 10],
+            &ST3215_STANDARD,
+            &MotorInstance::default_test(),
+        ).unwrap_err();
+        matches!(err, UnpackError::TooShort { .. });
+    }
+}
+```
+
+Add a `#[cfg(test)] impl MotorInstance { pub fn default_test() -> Self { ... } }` helper in `pack.rs` for test fixtures.
+
+- [ ] **Commit**
+
+```bash
+cargo test -p st3215-wire unpack::
+git add software/drivers/st3215-wire/src/unpack.rs
+git commit -m "st3215-wire: add unpack_state_bytes (pure parsing)"
+```
+
+### Task 2.5: Implement `pack.rs` (the new code + roundtrip test ★ P0)
+
+**Files:** Replace `software/drivers/st3215-wire/src/pack.rs`
+
+Full content from the Chunk 1 reviewer iteration + spec §6.2. Key structures (verify against existing driver for accuracy):
+
+```rust
+// software/drivers/st3215-wire/src/pack.rs
+use crate::layout::{DEFAULT_EEPROM, EEPROM_BYTES, RAM_BYTES, TOTAL_BYTES};
+use crate::presets::MotorModelSpec;
+use crate::units::{i16_to_sign_magnitude, rad_to_steps, STEPS_PER_REV};
+use bytes::{Bytes, BytesMut, BufMut};
+
+#[derive(Debug, Clone)]
+pub struct MotorInstance {
+    pub min_angle_steps: u16,
+    pub max_angle_steps: u16,
+    pub offset_steps: i16,
+    pub torque_limit: u16,
+    pub voltage_nominal_v: f32,
+}
+
+#[cfg(test)]
+impl MotorInstance {
+    pub fn default_test() -> Self {
+        Self {
+            min_angle_steps: 0, max_angle_steps: 4095,
+            offset_steps: 2048, torque_limit: 500, voltage_nominal_v: 12.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MotorSemanticState {
+    pub position_rad: f32,
+    pub velocity_rad_s: f32,
+    pub load_nm: f32,
+    pub temperature_c: f32,
+    pub torque_enabled: bool,
+    pub moving: bool,
+    pub goal_position_rad: f32,
+    pub goal_speed_rad_s: f32,
+}
+
+pub fn pack_state_bytes(
+    motor_id: u8,
+    spec: &MotorModelSpec,
+    instance: &MotorInstance,
+    state: &MotorSemanticState,
+) -> Bytes {
+    let mut buf = BytesMut::with_capacity(TOTAL_BYTES);
+
+    // EEPROM segment
+    let mut eeprom = DEFAULT_EEPROM;
+    eeprom[0x00] = (spec.model_number & 0xFF) as u8;
+    eeprom[0x01] = ((spec.model_number >> 8) & 0xFF) as u8;
+    eeprom[0x02] = spec.firmware_version;
+    eeprom[0x05] = motor_id;
+    eeprom[0x06] = spec.baud_rate_code;
+    eeprom[0x09] = (instance.min_angle_steps & 0xFF) as u8;
+    eeprom[0x0A] = ((instance.min_angle_steps >> 8) & 0xFF) as u8;
+    eeprom[0x0B] = (instance.max_angle_steps & 0xFF) as u8;
+    eeprom[0x0C] = ((instance.max_angle_steps >> 8) & 0xFF) as u8;
+    buf.put_slice(&eeprom);
+
+    // RAM segment (written into a 31-byte local array, then appended)
+    let mut ram = [0u8; RAM_BYTES];
+    ram[0x00] = if state.torque_enabled { 1 } else { 0 };       // 0x28 - 0x28
+
+    let goal_pos = rad_to_steps(state.goal_position_rad, instance.offset_steps);
+    ram[0x02] = (goal_pos & 0xFF) as u8;
+    ram[0x03] = ((goal_pos >> 8) & 0xFF) as u8;                  // 0x2A-0x2B
+
+    ram[0x08] = (instance.torque_limit & 0xFF) as u8;
+    ram[0x09] = ((instance.torque_limit >> 8) & 0xFF) as u8;     // 0x30-0x31
+
+    let present_pos = rad_to_steps(state.position_rad, instance.offset_steps);
+    ram[0x10] = (present_pos & 0xFF) as u8;
+    ram[0x11] = ((present_pos >> 8) & 0xFF) as u8;               // 0x38-0x39
+
+    let present_speed = (state.velocity_rad_s / (2.0 * std::f32::consts::PI / STEPS_PER_REV as f32)) as i16;
+    let speed_sm = i16_to_sign_magnitude(present_speed);
+    ram[0x12] = (speed_sm & 0xFF) as u8;
+    ram[0x13] = ((speed_sm >> 8) & 0xFF) as u8;                  // 0x3A-0x3B
+
+    ram[0x16] = (instance.voltage_nominal_v * 10.0) as u8;       // 0x3E
+    ram[0x17] = state.temperature_c as u8;                       // 0x3F
+    ram[0x1A] = if state.moving { 1 } else { 0 };                // 0x42
+
+    buf.put_slice(&ram);
+
+    assert_eq!(buf.len(), TOTAL_BYTES);
+    buf.freeze()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::presets::ST3215_STANDARD;
+    use crate::unpack::unpack_state_bytes;
+
+    fn sample_state(rad: f32) -> MotorSemanticState {
+        MotorSemanticState {
+            position_rad: rad, velocity_rad_s: 0.0, load_nm: 0.0,
+            temperature_c: 25.0, torque_enabled: true, moving: false,
+            goal_position_rad: rad, goal_speed_rad_s: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_pack_length_71_bytes() {
+        let b = pack_state_bytes(1, &ST3215_STANDARD, &MotorInstance::default_test(), &sample_state(0.0));
+        assert_eq!(b.len(), TOTAL_BYTES);
+    }
+
+    #[test]
+    fn test_pack_present_position_at_0x38() {
+        let b = pack_state_bytes(1, &ST3215_STANDARD, &MotorInstance::default_test(), &sample_state(1.0));
+        let raw = u16::from_le_bytes([b[0x38], b[0x39]]);
+        let expected = rad_to_steps(1.0, 2048);
+        assert_eq!(raw, expected);
+    }
+
+    #[test]
+    fn test_pack_motor_id() {
+        let b = pack_state_bytes(7, &ST3215_STANDARD, &MotorInstance::default_test(), &sample_state(0.0));
+        assert_eq!(b[0x05], 7);
+    }
+
+    #[test]
+    fn test_pack_torque_enable_boolean() {
+        let mut s = sample_state(0.0);
+        s.torque_enabled = true;
+        assert_eq!(pack_state_bytes(1, &ST3215_STANDARD, &MotorInstance::default_test(), &s)[0x28], 1);
+        s.torque_enabled = false;
+        assert_eq!(pack_state_bytes(1, &ST3215_STANDARD, &MotorInstance::default_test(), &s)[0x28], 0);
+    }
+
+    #[test]
+    fn test_pack_negative_speed_sign_bit() {
+        let mut s = sample_state(0.0);
+        s.velocity_rad_s = -1.0;
+        let b = pack_state_bytes(1, &ST3215_STANDARD, &MotorInstance::default_test(), &s);
+        let raw = u16::from_le_bytes([b[0x3A], b[0x3B]]);
+        assert!(raw & 0x8000 != 0, "negative speed should have sign bit set, got {:04x}", raw);
+    }
+
+    #[test]
+    fn test_pack_eeprom_model_number() {
+        let b = pack_state_bytes(1, &ST3215_STANDARD, &MotorInstance::default_test(), &sample_state(0.0));
+        assert_eq!(u16::from_le_bytes([b[0x00], b[0x01]]), ST3215_STANDARD.model_number);
+    }
+
+    #[test]
+    fn test_pack_roundtrip_via_unpack() {
+        // ★ P0: pack → unpack must preserve semantic state within tolerance
+        let instance = MotorInstance::default_test();
+        for rad in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+            let s = sample_state(rad);
+            let bytes = pack_state_bytes(1, &ST3215_STANDARD, &instance, &s);
+            let decoded = unpack_state_bytes(&bytes, &ST3215_STANDARD, &instance).unwrap();
+            assert!(
+                (decoded.position_rad - rad).abs() < 0.002,
+                "rad={} decoded={}", rad, decoded.position_rad
+            );
+        }
+    }
+}
+```
+
+- [ ] **Commit**
+
+```bash
+cargo test -p st3215-wire pack::
+git add software/drivers/st3215-wire/src/pack.rs
+git commit -m "st3215-wire: implement pack_state_bytes + P0 roundtrip test"
+```
+
+### Task 2.6: `presets.rs` — MotorModelSpec constant
+
+Replace with:
+
+```rust
+// software/drivers/st3215-wire/src/presets.rs
+#[derive(Debug, Clone)]
+pub struct MotorModelSpec {
+    pub model_number: u16,
+    pub firmware_version: u8,
+    pub baud_rate_code: u8,
+    pub steps_per_rev: u32,
+}
+
+pub const ST3215_STANDARD: MotorModelSpec = MotorModelSpec {
+    model_number: 777,
+    firmware_version: 10,
+    baud_rate_code: 0,
+    steps_per_rev: 4096,
+};
+```
+
+**Verify baud_rate_code** against the existing driver's ST3215 default — it may be a specific enum value rather than 0.
+
+- [ ] **Commit**
+
+```bash
+cargo test -p st3215-wire
+git add software/drivers/st3215-wire/src/presets.rs
+git commit -m "st3215-wire: add MotorModelSpec + ST3215_STANDARD"
+```
+
+### Task 2.7: Update real `st3215` driver to depend on `st3215-wire`
+
+**Files:**
+- Modify: `software/drivers/st3215/Cargo.toml`
+- Modify: `software/drivers/st3215/src/protocol/mod.rs`
+- Modify: possibly `software/drivers/st3215/src/protocol/memory.rs + units.rs` (delete or re-export)
+- Modify: `software/drivers/st3215/src/port.rs` (imports)
+
+Choose Option A (recommended): delete `protocol/memory.rs` and `protocol/units.rs`, update `protocol/mod.rs` to re-export from `st3215-wire`:
+
+```rust
+// software/drivers/st3215/src/protocol/mod.rs
+pub use st3215_wire::{EepromRegister, RamRegister};
+pub use st3215_wire::units;
+pub use st3215_wire::layout::{EEPROM_BYTES, RAM_BYTES, TOTAL_BYTES};
+```
+
+If the existing files have code not covered by st3215-wire (e.g., `mod packet;`), keep those pieces by switching to Option B: shim files:
+
+```rust
+// software/drivers/st3215/src/protocol/memory.rs (shim)
+pub use st3215_wire::{EepromRegister, RamRegister};
+pub use st3215_wire::layout::*;
+```
+
+For `port.rs`, find the inline parsing calls and replace with `st3215_wire::unpack_state_bytes` calls.
+
+- [ ] **Steps**:
+  1. Add dep: `st3215-wire = { path = "../st3215-wire" }` to `software/drivers/st3215/Cargo.toml`
+  2. Update `protocol/mod.rs` as above
+  3. Delete or shim `memory.rs` / `units.rs`
+  4. Update `port.rs` imports
+  5. `cargo test -p st3215` — **all existing tests must still pass**
+  6. `cargo build --workspace` — must succeed
+  7. Commit
+
+```bash
+cargo test -p st3215
+cargo build --workspace
+git add software/drivers/st3215/
+git commit -m "st3215: depend on st3215-wire for protocol types (code move, no logic change)"
+```
+
+### Chunk 2 exit checklist
+
+- [ ] `cargo build --workspace` green
+- [ ] `cargo test -p st3215-wire` ≥ 11 tests pass (including pack↔unpack roundtrip)
+- [ ] `cargo test -p st3215` all existing tests pass (regression guard)
+- [ ] `grep -ri "tokio\|normfs\|station_iface\|StationEngine" software/drivers/st3215-wire/src/` empty
+- [ ] 7 commits made (Tasks 2.1–2.7)
+
+---
+
+## Chunk 3: `sim-runtime` crate — foundation
+
+**Purpose:** Create the `sim-runtime` crate and build out its non-domain foundation: errors, clock, backend trait (pub(crate)), mock backend, runtime_dir RAII, UDS transport, IPC framing/codec/handshake. Everything needed for Chunk 4's main subsystem. **Note**: `SimRuntimeConfig` lives in `station-iface` (not here) to avoid a circular crate dep; see Task 3.2.
+
+**Exit criteria:**
+- `software/sim-runtime/` exists as a workspace member
+- `cargo build -p sim-runtime` green
+- `cargo test -p sim-runtime` ≥ 10 tests pass
+- prost generates `src/proto/world.rs` from `protobufs/sim/world.proto`
+- `grep -ri "st3215" software/sim-runtime/src/` empty
+- `WorldBackend` trait is `pub(crate)` (NOT `pub`)
+- 10 commits
+
+### Task 3.1: Create sim-runtime skeleton + prost generation
+
+**Files:**
+- Create: `software/sim-runtime/Cargo.toml`, `build.rs`, `src/lib.rs`
+- Create: `src/{errors,clock}.rs`
+- Create: `src/{backend,ipc,proto}/mod.rs`
+- Create: `src/backend/{mock,runtime_dir,transport}.rs` (stubs)
+- Create: `src/ipc/{framing,codec,handshake}.rs` (stubs)
+- Modify: `Cargo.toml` (workspace root)
+
+- [ ] **Step 1: `Cargo.toml`**
+
+```toml
+# software/sim-runtime/Cargo.toml
+[package]
+name = "sim-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "SimulationRuntime subsystem: capability-keyed world state for Station."
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+prost = "0.12"
+bytes = "1"
+thiserror = "1"
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+nix = { version = "0.27", features = ["signal"] }
+# Repo-internal deps (adjust paths as needed after verifying current workspace layout)
+normfs = { path = "../normfs" }
+station-iface = { path = "../station/shared/station-iface" }
+
+[build-dependencies]
+prost-build = "0.12"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"
+serde_yaml = "0.9"
+```
+
+**Note**: verify the `normfs` and `station-iface` paths by inspecting an existing driver's `Cargo.toml` (e.g., `software/drivers/st3215/Cargo.toml`). They may differ from the `../normfs` / `../station/shared/station-iface` guesses above.
+
+- [ ] **Step 2: `build.rs`** (prost_build)
+
+```rust
+// software/sim-runtime/build.rs
+fn main() {
+    println!("cargo:rerun-if-changed=../../protobufs/sim/world.proto");
+    let mut config = prost_build::Config::new();
+    config.out_dir("src/proto");
+    config
+        .compile_protos(&["../../protobufs/sim/world.proto"], &["../../protobufs"])
+        .expect("failed to compile world.proto");
+}
+```
+
+- [ ] **Step 3: `src/lib.rs`**
+
+```rust
+// software/sim-runtime/src/lib.rs
+//! SimulationRuntime: a first-class simulation subsystem for Station.
+//!
+//! Architecture invariant (CI-enforced): this crate has ZERO "st3215"
+//! references. Capability-keyed schema is the only vocabulary.
+
+pub mod errors;
+pub mod clock;
+
+pub(crate) mod backend;
+pub(crate) mod ipc;
+
+#[allow(clippy::all, non_snake_case)]
+pub mod proto;
+
+// Config types live in station-iface to avoid circular crate deps;
+// re-export them here for convenience.
+pub use station_iface::config::{SimRuntimeConfig, SimMode, LogCapture};
+pub use errors::SimRuntimeError;
+```
+
+- [ ] **Step 4: `src/proto/mod.rs`**
+
+```rust
+// software/sim-runtime/src/proto/mod.rs
+pub mod world {
+    include!(concat!(env!("OUT_DIR"), "/norma_sim.world.v1.rs"));
+}
+
+pub use world::*;
+```
+
+- [ ] **Step 5: Create stub module files**
+
+Use minimal placeholder contents (see Chunk 2 Task 2.1 for pattern):
+- `src/errors.rs`: `#[derive(Debug, thiserror::Error)] pub enum SimRuntimeError { #[error("stub")] Stub }`
+- `src/clock.rs`: empty
+- `src/backend/mod.rs`: `pub(crate) mod mock; pub(crate) mod runtime_dir; pub(crate) mod transport;`
+- `src/backend/mock.rs`, `runtime_dir.rs`, `transport.rs`: each `// stub`
+- `src/ipc/mod.rs`: `pub(crate) mod framing; pub(crate) mod codec; pub(crate) mod handshake;`
+- `src/ipc/framing.rs`, `codec.rs`, `handshake.rs`: each `// stub`
+
+- [ ] **Step 6: Workspace member + build**
+
+Add `"software/sim-runtime"` to workspace root `Cargo.toml` members. Then:
+
+```bash
+cargo build -p sim-runtime 2>&1 | tail -20
+```
+
+Expected: exits 0. Verify prost generated the proto file:
+
+```bash
+find target -name "norma_sim.world.v1.rs" 2>/dev/null
+```
+
+Expected: finds the generated file under `target/debug/build/sim-runtime-*/out/`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add Cargo.toml software/sim-runtime/
+git commit -m "sim-runtime: create crate skeleton + prost world.proto generation"
+```
+
+### Task 3.2: Move `SimRuntimeConfig` to `station-iface` (avoid circular dep)
+
+**Files:**
+- Modify: `software/station/shared/station-iface/src/config.rs`
+- Modify: `software/station/shared/station-iface/src/lib.rs` (re-exports)
+
+**Rationale:** If `SimRuntimeConfig` lives in `sim-runtime`, then `station-iface` (which hosts the top-level `Config` struct) would need to depend on `sim-runtime`. But `sim-runtime` depends on `station-iface` for the `StationEngine` trait. This is a circular dep. Resolution: config types live in `station-iface`, the "config-layer" crate. `sim-runtime` re-exports them.
+
+- [ ] **Step 1: Add to `station-iface/src/config.rs`**
+
+Append:
+
+```rust
+// Near the top of config.rs, add serde imports if not already present
+// Then at the bottom:
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimRuntimeConfig {
+    pub enabled: bool,
+    pub mode: SimMode,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<Vec<String>>,
+
+    #[serde(rename = "socket-path", default, skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<std::path::PathBuf>,
+
+    #[serde(rename = "runtime-dir", default, skip_serializing_if = "Option::is_none")]
+    pub runtime_dir: Option<std::path::PathBuf>,
+
+    #[serde(rename = "startup-timeout-ms", default = "default_sim_startup_timeout")]
+    pub startup_timeout_ms: u64,
+
+    #[serde(rename = "shutdown-timeout-ms", default = "default_sim_shutdown_timeout")]
+    pub shutdown_timeout_ms: u64,
+
+    #[serde(rename = "log-capture", default)]
+    pub log_capture: LogCapture,
+
+    #[serde(rename = "log-file", default, skip_serializing_if = "Option::is_none")]
+    pub log_file: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SimMode { Internal, External }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogCapture { #[default] File, Inherit, Null }
+
+fn default_sim_startup_timeout() -> u64 { 5000 }
+fn default_sim_shutdown_timeout() -> u64 { 2000 }
+
+impl SimRuntimeConfig {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.enabled { return Ok(()); }
+        match self.mode {
+            SimMode::Internal => {
+                if self.launcher.is_none() {
+                    return Err("sim-runtime.mode=internal requires launcher");
+                }
+            }
+            SimMode::External => {
+                if self.socket_path.is_none() {
+                    return Err("sim-runtime.mode=external requires socket-path");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod sim_runtime_config_tests {
+    use super::*;
+    #[test]
+    fn test_validate_internal_requires_launcher() { /* ... */ }
+    #[test]
+    fn test_validate_external_requires_socket_path() { /* ... */ }
+}
+```
+
+- [ ] **Step 2: Re-export from `station-iface/src/lib.rs`**
+
+```rust
+pub use config::{SimRuntimeConfig, SimMode, LogCapture};
+```
+
+- [ ] **Step 3: Verify sim-runtime's `pub use station_iface::config::{...}` resolves**
+
+```bash
+cargo build -p sim-runtime
+```
+
+Expected: exits 0. sim-runtime re-exports the config types transparently.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add software/station/shared/station-iface/
+git commit -m "station-iface: host SimRuntimeConfig + SimMode + LogCapture (avoid circular dep with sim-runtime)"
+```
+
+### Task 3.3: `errors.rs`
+
+```rust
+// software/sim-runtime/src/errors.rs
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum SimRuntimeError {
+    #[error("runtime dir create failed: {0}")]
+    RuntimeDirCreate(String),
+
+    #[error("backend spawn failed: {0}")]
+    BackendSpawn(String),
+
+    #[error("handshake timeout")]
+    HandshakeTimeout,
+
+    #[error("protocol version mismatch: ours={ours}, theirs={theirs}")]
+    ProtocolMismatch { ours: u32, theirs: u32 },
+
+    #[error("backend crashed")]
+    BackendCrashed,
+
+    #[error("ipc channel closed")]
+    IpcClosed,
+
+    #[error("config validation: {0}")]
+    ConfigValidation(String),
+
+    #[error("normfs error: {0}")]
+    NormfsError(String),
+
+    #[error("backpressure: reliable lane full")]
+    Backpressure,
+}
+```
+
+Commit: `git commit -m "sim-runtime: add SimRuntimeError enum"`.
+
+### Task 3.4: `clock.rs`
+
+```rust
+// software/sim-runtime/src/clock.rs
+use uuid::Uuid;
+
+pub fn new_session_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
+pub fn world_tick_to_sim_time_ns(tick: u64, timestep_ns: u64) -> u64 {
+    tick.saturating_mul(timestep_ns)
+}
+
+pub fn current_wall_ns() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_id_unique() {
+        let a = new_session_id();
+        let b = new_session_id();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_tick_to_sim_time() {
+        assert_eq!(world_tick_to_sim_time_ns(0, 2_000_000), 0);
+        assert_eq!(world_tick_to_sim_time_ns(5, 2_000_000), 10_000_000);
+    }
+}
+```
+
+Commit: `git commit -m "sim-runtime: add clock helpers"`.
+
+### Task 3.5: `backend/mod.rs` — WorldBackend trait (pub(crate))
+
+```rust
+// software/sim-runtime/src/backend/mod.rs
+pub(crate) mod mock;
+pub(crate) mod runtime_dir;
+pub(crate) mod transport;
+
+use crate::errors::SimRuntimeError;
+use crate::proto::{Envelope, WorldDescriptor};
+use async_trait::async_trait;
+use std::time::Duration;
+use tokio::sync::mpsc;
+
+/// Marker comment for CI: this trait is pub(crate) not pub.
+/// The grep invariant `grep -q "^pub trait WorldBackend"` MUST fail (return 1).
+#[async_trait]
+pub(crate) trait WorldBackend: Send + 'static {
+    async fn start(
+        &mut self,
+        startup_timeout: Duration,
+    ) -> Result<BackendStarted, SimRuntimeError>;
+
+    async fn wait_terminated(self: Box<Self>) -> BackendTermination;
+
+    async fn shutdown(&mut self, grace: Duration) -> Result<(), SimRuntimeError>;
+}
+
+pub(crate) struct BackendStarted {
+    pub descriptor: WorldDescriptor,
+    pub outbound_tx: mpsc::Sender<Envelope>,
+    pub inbound_rx: mpsc::Receiver<Envelope>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum BackendTermination {
+    Clean,
+    Crashed { exit_code: Option<i32>, stderr_tail: Vec<u8> },
+    KilledBySupervisor,
+    SignaledByOs { signal: i32 },
+}
+```
+
+Commit: `git commit -m "sim-runtime: add WorldBackend trait (pub(crate))"`.
+
+### Task 3.6: `backend/runtime_dir.rs` (TempRuntimeDir RAII)
+
+Full implementation from spec §6.3. Key:
+
+```rust
+// software/sim-runtime/src/backend/runtime_dir.rs
+use std::fs;
+use std::path::{Path, PathBuf};
+
+pub(crate) struct TempRuntimeDir {
+    path: PathBuf,
+}
+
+impl TempRuntimeDir {
+    pub fn create(parent: Option<&Path>, station_pid: u32) -> std::io::Result<Self> {
+        let path = match parent {
+            Some(p) => p.to_path_buf(),
+            None => PathBuf::from(format!("/tmp/norma-sim-{}", station_pid)),
+        };
+        fs::create_dir_all(&path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(Self { path })
+    }
+
+    pub fn socket_path(&self) -> PathBuf { self.path.join("sim.sock") }
+    pub fn path(&self) -> &Path { &self.path }
+}
+
+impl Drop for TempRuntimeDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_create_and_drop_removes_dir() {
+        let dir = TempRuntimeDir::create(None, 999999).unwrap();
+        let p = dir.path().to_path_buf();
+        assert!(p.exists());
+        drop(dir);
+        assert!(!p.exists());
+    }
+}
+```
+
+Commit: `git commit -m "sim-runtime: add TempRuntimeDir RAII"`.
+
+### Task 3.7: `backend/transport.rs` + `ipc/framing.rs`
+
+```rust
+// software/sim-runtime/src/ipc/framing.rs
+use tokio::net::UnixStream;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+pub(crate) fn framed_unix_stream(stream: UnixStream) -> Framed<UnixStream, LengthDelimitedCodec> {
+    let codec = LengthDelimitedCodec::builder()
+        .length_field_type::<u32>()
+        .big_endian()
+        .max_frame_length(16 * 1024 * 1024)
+        .new_codec();
+    Framed::new(stream, codec)
+}
+```
+
+```rust
+// software/sim-runtime/src/backend/transport.rs
+use crate::ipc::framing::framed_unix_stream;
+use crate::proto::Envelope;
+use futures::{SinkExt, StreamExt};
+use prost::Message;
+use tokio::net::UnixStream;
+use tokio::sync::mpsc;
+
+pub(crate) async fn spawn_transport(
+    stream: UnixStream,
+) -> (mpsc::Sender<Envelope>, mpsc::Receiver<Envelope>) {
+    let framed = framed_unix_stream(stream);
+    let (mut sink, mut stream) = framed.split();
+    let (out_tx, mut out_rx) = mpsc::channel::<Envelope>(256);
+    let (in_tx, in_rx) = mpsc::channel::<Envelope>(256);
+
+    tokio::spawn(async move {
+        while let Some(env) = out_rx.recv().await {
+            let mut buf = Vec::with_capacity(env.encoded_len());
+            if env.encode(&mut buf).is_err() { break; }
+            if sink.send(buf.into()).await.is_err() { break; }
+        }
+    });
+
+    tokio::spawn(async move {
+        while let Some(frame) = stream.next().await {
+            let frame = match frame { Ok(b) => b, Err(_) => break };
+            let env = match Envelope::decode(&frame[..]) { Ok(e) => e, Err(_) => continue };
+            if in_tx.send(env).await.is_err() { break; }
+        }
+    });
+
+    (out_tx, in_rx)
+}
+```
+
+Commit: `git commit -m "sim-runtime: add UDS framing + transport helpers"`.
+
+### Task 3.8: `ipc/codec.rs` — Envelope encode/decode + tests
+
+```rust
+// software/sim-runtime/src/ipc/codec.rs
+use crate::proto::Envelope;
+use prost::Message;
+
+pub(crate) fn encode_envelope(env: &Envelope) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(env.encoded_len());
+    env.encode(&mut buf).expect("Envelope encode cannot fail");
+    buf
+}
+
+pub(crate) fn decode_envelope(bytes: &[u8]) -> Result<Envelope, prost::DecodeError> {
+    Envelope::decode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{envelope::Payload, Goodbye, Hello};
+
+    #[test]
+    fn test_hello_roundtrip() {
+        let env = Envelope {
+            payload: Some(Payload::Hello(Hello {
+                protocol_version: 1,
+                client_role: "test".into(),
+                client_id: "id".into(),
+            })),
+        };
+        let bytes = encode_envelope(&env);
+        let decoded = decode_envelope(&bytes).unwrap();
+        assert!(matches!(decoded.payload, Some(Payload::Hello(_))));
+    }
+
+    #[test]
+    fn test_goodbye_roundtrip() {
+        let env = Envelope {
+            payload: Some(Payload::Goodbye(Goodbye { reason: "bye".into() })),
+        };
+        let bytes = encode_envelope(&env);
+        let decoded = decode_envelope(&bytes).unwrap();
+        if let Some(Payload::Goodbye(g)) = decoded.payload {
+            assert_eq!(g.reason, "bye");
+        } else {
+            panic!("expected Goodbye");
+        }
+    }
+}
+```
+
+Commit: `git commit -m "sim-runtime: add Envelope codec with roundtrip tests"`.
+
+### Task 3.9: `ipc/handshake.rs` — client-side handshake
+
+```rust
+// software/sim-runtime/src/ipc/handshake.rs
+use crate::errors::SimRuntimeError;
+use crate::proto::{envelope::Payload, Envelope, Hello, Welcome, WorldDescriptor};
+use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
+
+pub(crate) const PROTOCOL_VERSION: u32 = 1;
+
+pub(crate) async fn perform_client_handshake(
+    outbound_tx: &mpsc::Sender<Envelope>,
+    inbound_rx: &mut mpsc::Receiver<Envelope>,
+    client_id: String,
+    handshake_timeout: Duration,
+) -> Result<WorldDescriptor, SimRuntimeError> {
+    let hello = Envelope {
+        payload: Some(Payload::Hello(Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_role: "sim-runtime".into(),
+            client_id,
+        })),
+    };
+    outbound_tx.send(hello).await.map_err(|_| SimRuntimeError::IpcClosed)?;
+
+    let welcome_env = timeout(handshake_timeout, inbound_rx.recv())
+        .await
+        .map_err(|_| SimRuntimeError::HandshakeTimeout)?
+        .ok_or(SimRuntimeError::IpcClosed)?;
+
+    match welcome_env.payload {
+        Some(Payload::Welcome(Welcome { protocol_version, world: Some(descriptor) })) => {
+            if protocol_version != PROTOCOL_VERSION {
+                return Err(SimRuntimeError::ProtocolMismatch {
+                    ours: PROTOCOL_VERSION,
+                    theirs: protocol_version,
+                });
+            }
+            Ok(descriptor)
+        }
+        _ => Err(SimRuntimeError::ConfigValidation("expected Welcome".into())),
+    }
+}
+```
+
+Test: use `MockBackend` to test happy path + version mismatch. Commit: `git commit -m "sim-runtime: add client-side handshake"`.
+
+### Task 3.10: `backend/mock.rs` — MockBackend for unit tests
+
+```rust
+// software/sim-runtime/src/backend/mock.rs
+#![cfg(test)]
+
+use super::{BackendStarted, BackendTermination, WorldBackend};
+use crate::errors::SimRuntimeError;
+use crate::proto::{Envelope, WorldDescriptor};
+use async_trait::async_trait;
+use std::time::Duration;
+use tokio::sync::mpsc;
+
+pub(crate) struct MockBackend {
+    pub scripted_inbound: Vec<Envelope>,
+    pub descriptor: WorldDescriptor,
+    pub outbound_observer: Option<mpsc::Sender<Envelope>>,
+}
+
+impl MockBackend {
+    pub fn new(descriptor: WorldDescriptor) -> Self {
+        Self { scripted_inbound: vec![], descriptor, outbound_observer: None }
+    }
+}
+
+#[async_trait]
+impl WorldBackend for MockBackend {
+    async fn start(&mut self, _t: Duration) -> Result<BackendStarted, SimRuntimeError> {
+        let (out_tx, mut out_rx) = mpsc::channel::<Envelope>(256);
+        let (in_tx, in_rx) = mpsc::channel::<Envelope>(256);
+        for env in self.scripted_inbound.drain(..) {
+            let _ = in_tx.send(env).await;
+        }
+        // Forward outbound to observer if set
+        if let Some(obs) = self.outbound_observer.take() {
+            tokio::spawn(async move {
+                while let Some(env) = out_rx.recv().await {
+                    let _ = obs.send(env).await;
+                }
+            });
+        }
+        Ok(BackendStarted {
+            descriptor: self.descriptor.clone(),
+            outbound_tx: out_tx,
+            inbound_rx: in_rx,
+        })
+    }
+
+    async fn wait_terminated(self: Box<Self>) -> BackendTermination {
+        BackendTermination::Clean
+    }
+
+    async fn shutdown(&mut self, _g: Duration) -> Result<(), SimRuntimeError> { Ok(()) }
+}
+```
+
+Commit: `git commit -m "sim-runtime: add MockBackend (#[cfg(test)]) for unit tests"`.
+
+### Chunk 3 exit checklist
+
+- [ ] `cargo build -p sim-runtime` green
+- [ ] `cargo test -p sim-runtime` ≥ 6 tests pass (clock, runtime_dir, codec x2, handshake via mock optional)
+- [ ] `grep -ri "st3215" software/sim-runtime/src/` empty
+- [ ] `grep -q "^pub trait WorldBackend" software/sim-runtime/src/backend/mod.rs` returns 1 (pub(crate) verified)
+- [ ] ~10 commits (Tasks 3.1–3.10)
+
+---
+
+## Chunk 4: `sim-runtime` crate — main subsystem
+
+**Purpose:** Build the public `SimulationRuntime` API on Chunk 3's foundation: snapshot broker, actuation sender (QoS lanes), registry, health publisher (including `/sim/descriptor` persistence), supervisor, ChildProcess and ExternalSocket backends, and `runtime.rs` that glues everything together.
+
+**Exit criteria:**
+- Public API: `SimulationRuntime::start / shutdown / world_descriptor / subscribe_snapshots / send_actuation / subscribe_health` all implemented
+- ChildProcessBackend spawns subprocess + completes handshake (tested via a fixture Python script)
+- ExternalSocketBackend connects to existing UDS
+- Snapshot broker supports ≥ 2 concurrent subscribers
+- Actuation sender routes `QOS_LOSSY_SETPOINT` (drop-oldest) vs `QOS_RELIABLE_CONTROL` (backpressure)
+- `/sim/health` queue receives 1Hz SimHealth events
+- `/sim/descriptor` queue receives exactly one WorldDescriptor per session
+- `cargo test -p sim-runtime --all-features` ≥ 15 tests total (Chunks 3+4)
+- 9 commits
+
+### Task 4.1: `snapshot_broker.rs`
+
+```rust
+// software/sim-runtime/src/snapshot_broker.rs
+use crate::proto::WorldSnapshot;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+
+pub(crate) struct SnapshotBroker {
+    tx: broadcast::Sender<Arc<WorldSnapshot>>,
+}
+
+impl SnapshotBroker {
+    pub fn new(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
+        Self { tx }
+    }
+
+    pub fn publish(&self, snapshot: WorldSnapshot) {
+        let _ = self.tx.send(Arc::new(snapshot));
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<Arc<WorldSnapshot>> {
+        self.tx.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_broker_multi_subscriber() {
+        let broker = SnapshotBroker::new(16);
+        let mut a = broker.subscribe();
+        let mut b = broker.subscribe();
+        let snap = WorldSnapshot { clock: None, actuators: vec![], sensors: vec![] };
+        broker.publish(snap);
+        let a_got = a.recv().await.unwrap();
+        let b_got = b.recv().await.unwrap();
+        assert_eq!(Arc::strong_count(&a_got), 3); // broker holds one, a and b hold one each wrapping Arc
+        assert!(a_got.actuators.is_empty());
+        assert!(b_got.actuators.is_empty());
+    }
+}
+```
+
+Add `pub(crate) mod snapshot_broker;` to `lib.rs`. Commit: `git commit -m "sim-runtime: add SnapshotBroker with multi-subscriber test"`.
+
+### Task 4.2: `actuation_sender.rs`
+
+```rust
+// software/sim-runtime/src/actuation_sender.rs
+use crate::errors::SimRuntimeError;
+use crate::proto::{envelope::Payload, ActuationBatch, Envelope, QosLane};
+use tokio::sync::mpsc;
+
+pub(crate) struct ActuationSender {
+    lossy_tx: mpsc::Sender<ActuationBatch>,
+    reliable_tx: mpsc::Sender<ActuationBatch>,
+}
+
+impl ActuationSender {
+    pub fn new(outbound: mpsc::Sender<Envelope>) -> Self {
+        let (lossy_tx, mut lossy_rx) = mpsc::channel::<ActuationBatch>(256);
+        let (reliable_tx, mut reliable_rx) = mpsc::channel::<ActuationBatch>(32);
+
+        let out_lossy = outbound.clone();
+        tokio::spawn(async move {
+            while let Some(batch) = lossy_rx.recv().await {
+                let env = Envelope { payload: Some(Payload::Actuation(batch)) };
+                let _ = out_lossy.send(env).await;
+            }
+        });
+        let out_reliable = outbound;
+        tokio::spawn(async move {
+            while let Some(batch) = reliable_rx.recv().await {
+                let env = Envelope { payload: Some(Payload::Actuation(batch)) };
+                let _ = out_reliable.send(env).await;
+            }
+        });
+
+        Self { lossy_tx, reliable_tx }
+    }
+
+    pub async fn send(&self, batch: ActuationBatch) -> Result<(), SimRuntimeError> {
+        match QosLane::from_i32(batch.lane).unwrap_or(QosLane::Unspecified) {
+            QosLane::LossySetpoint => {
+                match self.lossy_tx.try_send(batch) {
+                    Ok(()) => Ok(()),
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        log::warn!(target: "sim_runtime::actuation",
+                            "lossy lane full, dropping batch");
+                        Ok(())
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => Err(SimRuntimeError::IpcClosed),
+                }
+            }
+            QosLane::ReliableControl => {
+                self.reliable_tx.send(batch).await
+                    .map_err(|_| SimRuntimeError::IpcClosed)
+            }
+            QosLane::Unspecified => {
+                Err(SimRuntimeError::ConfigValidation("lane must be set".into()))
+            }
+        }
+    }
+}
+```
+
+Tests: `test_lossy_drop_oldest_on_full`, `test_reliable_lane_roundtrip`. Add `pub(crate) mod actuation_sender;` to lib.rs.
+
+Commit: `git commit -m "sim-runtime: add ActuationSender with QoS lane routing"`.
+
+### Task 4.3: `registry.rs`
+
+```rust
+// software/sim-runtime/src/registry.rs
+use crate::proto::{RobotDescriptor, WorldDescriptor};
+use std::collections::HashMap;
+
+pub(crate) struct WorldRegistry {
+    pub world_name: String,
+    pub robots: HashMap<String, RobotDescriptor>,
+}
+
+impl WorldRegistry {
+    pub fn from_descriptor(desc: &WorldDescriptor) -> Self {
+        let mut robots = HashMap::new();
+        for r in &desc.robots {
+            robots.insert(r.robot_id.clone(), r.clone());
+        }
+        Self {
+            world_name: desc.world_name.clone(),
+            robots,
+        }
+    }
+
+    pub fn robot(&self, id: &str) -> Option<&RobotDescriptor> {
+        self.robots.get(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_registry_from_descriptor() {
+        let desc = WorldDescriptor {
+            world_name: "test".into(),
+            robots: vec![RobotDescriptor {
+                robot_id: "robot1".into(),
+                actuators: vec![],
+                sensors: vec![],
+            }],
+            initial_clock: None,
+            publish_hz: 100,
+            physics_hz: 500,
+        };
+        let reg = WorldRegistry::from_descriptor(&desc);
+        assert!(reg.robot("robot1").is_some());
+        assert!(reg.robot("nonexistent").is_none());
+    }
+}
+```
+
+Commit: `git commit -m "sim-runtime: add WorldRegistry"`.
+
+### Task 4.4: `health.rs` — SimHealth publisher + descriptor persistence
+
+```rust
+// software/sim-runtime/src/health.rs
+use crate::errors::SimRuntimeError;
+use crate::proto::{SimHealth, WorldDescriptor};
+use normfs::NormFS;
+use prost::Message;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+
+pub(crate) const SIM_HEALTH_QUEUE_ID: &str = "sim/health";
+pub(crate) const SIM_DESCRIPTOR_QUEUE_ID: &str = "sim/descriptor";
+
+pub(crate) struct HealthPublisher {
+    normfs: Arc<NormFS>,
+    broadcast_tx: broadcast::Sender<SimHealth>,
+    session_id: String,
+}
+
+impl HealthPublisher {
+    pub async fn new(
+        normfs: Arc<NormFS>,
+        session_id: String,
+    ) -> Result<Self, SimRuntimeError> {
+        // Register queues. Use whatever NormFS API the existing drivers use.
+        // Pattern from st3215 driver.rs: normfs.resolve + ensure_queue_exists_for_write.
+        let health_qid = normfs.resolve(SIM_HEALTH_QUEUE_ID);
+        normfs.ensure_queue_exists_for_write(&health_qid).await
+            .map_err(|e| SimRuntimeError::NormfsError(format!("health queue: {:?}", e)))?;
+
+        let desc_qid = normfs.resolve(SIM_DESCRIPTOR_QUEUE_ID);
+        normfs.ensure_queue_exists_for_write(&desc_qid).await
+            .map_err(|e| SimRuntimeError::NormfsError(format!("descriptor queue: {:?}", e)))?;
+
+        let (broadcast_tx, _) = broadcast::channel(64);
+        Ok(Self { normfs, broadcast_tx, session_id })
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<SimHealth> {
+        self.broadcast_tx.subscribe()
+    }
+
+    /// One-shot write of WorldDescriptor to `/sim/descriptor` after handshake.
+    /// This enables offline replay of archived capability-keyed commands.
+    pub async fn publish_descriptor(&self, desc: &WorldDescriptor) -> Result<(), SimRuntimeError> {
+        let qid = self.normfs.resolve(SIM_DESCRIPTOR_QUEUE_ID);
+        let mut buf = Vec::with_capacity(desc.encoded_len());
+        desc.encode(&mut buf).map_err(|_| SimRuntimeError::IpcClosed)?;
+        self.normfs.write(&qid, &buf).await
+            .map_err(|e| SimRuntimeError::NormfsError(format!("{:?}", e)))?;
+        Ok(())
+    }
+
+    pub async fn publish_health(&self, mut health: SimHealth) -> Result<(), SimRuntimeError> {
+        health.runtime_session_id = self.session_id.clone();
+        let _ = self.broadcast_tx.send(health.clone());
+        let qid = self.normfs.resolve(SIM_HEALTH_QUEUE_ID);
+        let mut buf = Vec::with_capacity(health.encoded_len());
+        health.encode(&mut buf).map_err(|_| SimRuntimeError::IpcClosed)?;
+        self.normfs.write(&qid, &buf).await
+            .map_err(|e| SimRuntimeError::NormfsError(format!("{:?}", e)))?;
+        Ok(())
+    }
+}
+```
+
+**Important**: the `normfs` API calls (`resolve`, `ensure_queue_exists_for_write`, `write`) are assumptions — verify against the real `normfs` crate signatures by reading `software/drivers/st3215/src/driver.rs` and `software/station/bin/station/src/main.rs`. If the method names or signatures differ, adapt.
+
+Tests: `test_descriptor_written_to_queue` (read back, compare), `test_health_propagated_to_broadcast_and_queue`. Commit: `git commit -m "sim-runtime: add HealthPublisher with /sim/descriptor + /sim/health queues"`.
+
+### Task 4.5: `supervisor.rs`
+
+```rust
+// software/sim-runtime/src/supervisor.rs
+use crate::backend::{BackendTermination, WorldBackend};
+use crate::health::HealthPublisher;
+use crate::proto::{backend_termination, BackendTermination as BtProto, SimHealth};
+use std::sync::Arc;
+
+pub(crate) fn spawn_supervisor(
+    backend: Box<dyn WorldBackend>,
+    health: Arc<HealthPublisher>,
+) {
+    tokio::spawn(async move {
+        let termination = backend.wait_terminated().await;
+        let (cause, exit_code, signal, stderr_tail) = match termination {
+            BackendTermination::Clean => (backend_termination::Cause::BtClean as i32, 0, 0, vec![]),
+            BackendTermination::Crashed { exit_code, stderr_tail } => {
+                (backend_termination::Cause::BtCrashed as i32, exit_code.unwrap_or(0), 0, stderr_tail)
+            }
+            BackendTermination::KilledBySupervisor => {
+                (backend_termination::Cause::BtKilledBySupervisor as i32, 0, 0, vec![])
+            }
+            BackendTermination::SignaledByOs { signal } => {
+                (backend_termination::Cause::BtSignaledByOs as i32, 0, signal, vec![])
+            }
+        };
+
+        let event = SimHealth {
+            backend_alive: false,
+            termination: Some(BtProto { cause, exit_code, signal, stderr_tail }),
+            ..Default::default()
+        };
+        if let Err(e) = health.publish_health(event).await {
+            log::error!(target: "sim_runtime::supervisor", "failed to publish final health: {:?}", e);
+        }
+    });
+}
+```
+
+Commit: `git commit -m "sim-runtime: add supervisor that broadcasts final health on backend termination"`.
+
+### Task 4.6: `backend/child_process.rs`
+
+Full implementation from Chunk 3's Task 3.7 skeleton + spawn subprocess + poll for socket + connect + handshake. Key points:
+- Use `tokio::process::Command` with `.env("NORMA_SIM_SOCKET_PATH", ...)` and `.kill_on_drop(true)`
+- Poll `socket_path.exists()` every 50ms up to `startup_timeout`
+- After connect, `spawn_transport()`, then `perform_client_handshake()`
+- On failure: kill subprocess, return error
+
+Integration test: create `tests/fixtures/fake_sim_server.py` that binds `$NORMA_SIM_SOCKET_PATH` as a UDS, accepts one connection, reads one Hello envelope, sends a Welcome envelope with a minimal WorldDescriptor, sleeps for tests to verify, and exits on signal.
+
+```python
+# software/sim-runtime/tests/fixtures/fake_sim_server.py
+#!/usr/bin/env python3
+import asyncio, os, struct, sys
+# Deliberately minimal — uses protobuf only if generated via pip install -e software/sim-server/
+# OR hand-crafted bytes. For the fixture, use hand-crafted to avoid depending on Chunk 5.
+# ...
+```
+
+Actually, a simpler approach: **skip the Python fixture** and do the ChildProcessBackend test via `ExternalSocketBackend` pattern — launch a simple Python one-liner via `bash -c` that uses `socat` or asyncio to accept one connection and hand-craft a Welcome envelope. Or use a pure-Rust fake server via a test helper.
+
+The cleanest in-Rust approach: a `tests/helpers/in_process_server.rs` that binds a UDS and plays the sim role, driven by the test harness. No subprocess needed for tests.
+
+For the sake of plan brevity, the implementer decides: either a fake Python script, a fake Rust in-process server, or skip subprocess tests and verify ChildProcessBackend only via MockBackend + a smoke test in Chunk 8.
+
+Commit: `git commit -m "sim-runtime: add ChildProcessBackend (spawn + handshake)"`.
+
+### Task 4.7: `backend/external_socket.rs`
+
+Simpler version that doesn't spawn — just connects to an existing UDS. Same handshake flow. Commit: `git commit -m "sim-runtime: add ExternalSocketBackend"`.
+
+### Task 4.8: `runtime.rs` — the main public API
+
+```rust
+// software/sim-runtime/src/runtime.rs
+use crate::actuation_sender::ActuationSender;
+use crate::backend::{child_process::ChildProcessBackend, external_socket::ExternalSocketBackend, WorldBackend};
+use crate::clock::new_session_id;
+use crate::errors::SimRuntimeError;
+use crate::health::HealthPublisher;
+use crate::proto::{envelope::Payload, ActuationBatch, Envelope, SimHealth, WorldDescriptor, WorldSnapshot};
+use crate::registry::WorldRegistry;
+use crate::snapshot_broker::SnapshotBroker;
+use crate::SimRuntimeConfig;
+use station_iface::config::SimMode;
+use normfs::NormFS;
+use station_iface::StationEngine;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::broadcast;
+
+pub struct SimulationRuntime {
+    registry: WorldRegistry,
+    descriptor: WorldDescriptor,
+    broker: Arc<SnapshotBroker>,
+    actuation: Arc<ActuationSender>,
+    health: Arc<HealthPublisher>,
+    session_id: String,
+    _dispatch_task: tokio::task::JoinHandle<()>,
+}
+
+impl SimulationRuntime {
+    pub async fn start(
+        normfs: Arc<NormFS>,
+        _engine: Arc<dyn StationEngine>,
+        config: SimRuntimeConfig,
+    ) -> Result<Arc<Self>, SimRuntimeError> {
+        config.validate().map_err(|e| SimRuntimeError::ConfigValidation(e.into()))?;
+        let session_id = new_session_id();
+
+        // Build backend
+        let mut backend: Box<dyn WorldBackend> = match config.mode {
+            SimMode::Internal => Box::new(ChildProcessBackend::new(&config, session_id.clone())),
+            SimMode::External => Box::new(ExternalSocketBackend::new(
+                config.socket_path.clone().unwrap(),
+                session_id.clone(),
+            )),
+        };
+
+        // Handshake
+        let started = backend.start(Duration::from_millis(config.startup_timeout_ms)).await?;
+        let descriptor = started.descriptor;
+        let outbound_tx = started.outbound_tx;
+        let mut inbound_rx = started.inbound_rx;
+
+        // Build subsystem components
+        let registry = WorldRegistry::from_descriptor(&descriptor);
+        let broker = Arc::new(SnapshotBroker::new(256));
+        let actuation = Arc::new(ActuationSender::new(outbound_tx.clone()));
+        let health = Arc::new(HealthPublisher::new(normfs.clone(), session_id.clone()).await?);
+
+        // Publish descriptor to /sim/descriptor queue
+        health.publish_descriptor(&descriptor).await?;
+
+        // Supervise
+        crate::supervisor::spawn_supervisor(backend, health.clone());
+
+        // Dispatch loop: route inbound Envelopes to broker, health, or error log
+        let broker_for_dispatch = broker.clone();
+        let dispatch = tokio::spawn(async move {
+            while let Some(env) = inbound_rx.recv().await {
+                match env.payload {
+                    Some(Payload::Snapshot(snap)) => broker_for_dispatch.publish(snap),
+                    Some(Payload::Error(e)) => {
+                        log::warn!(target: "sim_runtime::dispatch", "backend error: code={} msg={}", e.code, e.message);
+                    }
+                    _ => log::trace!(target: "sim_runtime::dispatch", "unhandled envelope"),
+                }
+            }
+            log::info!(target: "sim_runtime::dispatch", "dispatch loop exited");
+        });
+
+        Ok(Arc::new(Self {
+            registry,
+            descriptor,
+            broker,
+            actuation,
+            health,
+            session_id,
+            _dispatch_task: dispatch,
+        }))
+    }
+
+    pub async fn shutdown(self: Arc<Self>) -> Result<(), SimRuntimeError> {
+        let final_health = SimHealth {
+            backend_alive: false,
+            runtime_session_id: self.session_id.clone(),
+            ..Default::default()
+        };
+        self.health.publish_health(final_health).await?;
+        Ok(())
+    }
+
+    pub fn world_descriptor(&self) -> &WorldDescriptor { &self.descriptor }
+
+    pub fn subscribe_snapshots(&self) -> broadcast::Receiver<Arc<WorldSnapshot>> {
+        self.broker.subscribe()
+    }
+
+    pub async fn send_actuation(&self, batch: ActuationBatch) -> Result<(), SimRuntimeError> {
+        self.actuation.send(batch).await
+    }
+
+    pub fn subscribe_health(&self) -> broadcast::Receiver<SimHealth> {
+        self.health.subscribe()
+    }
+
+    /// Access the in-memory registry. Non-public; consumers should use world_descriptor().
+    #[allow(dead_code)]
+    pub(crate) fn registry(&self) -> &WorldRegistry { &self.registry }
+
+    /// Test-only constructor that accepts any WorldBackend (e.g., MockBackend).
+    #[cfg(test)]
+    pub(crate) async fn start_with_backend(
+        normfs: Arc<NormFS>,
+        backend: Box<dyn WorldBackend>,
+        session_id: String,
+    ) -> Result<Arc<Self>, SimRuntimeError> {
+        // ... similar to start() but skips config parsing and uses the provided backend ...
+        todo!()  // implement after the happy path is tested manually
+    }
+}
+```
+
+- [ ] **Commit**: `git commit -m "sim-runtime: add SimulationRuntime public API with dispatch loop"`.
+
+### Task 4.9: Integration tests
+
+Create `software/sim-runtime/tests/runtime_integration.rs`:
+
+```rust
+// Uses MockBackend via start_with_backend test-only constructor
+#[tokio::test]
+async fn test_runtime_start_publishes_descriptor_to_queue() {
+    // 1. Create in-memory NormFS (or tempdir)
+    // 2. Create MockBackend with a canned WorldDescriptor
+    // 3. Call SimulationRuntime::start_with_backend
+    // 4. Read from /sim/descriptor queue
+    // 5. Assert one entry, decode, match the canned WorldDescriptor
+}
+
+#[tokio::test]
+async fn test_runtime_multi_subscriber_fan_out() {
+    // 1. MockBackend with snapshots queued to push at intervals
+    // 2. Two subscribe_snapshots() receivers
+    // 3. Push one snapshot
+    // 4. Both receivers get it
+}
+
+#[tokio::test]
+async fn test_runtime_actuation_lane_routing() {
+    // 1. MockBackend with an outbound observer channel
+    // 2. Send LOSSY_SETPOINT batch → observer gets it
+    // 3. Send RELIABLE_CONTROL batch → observer gets it
+    // 4. Flood lossy lane with 300 batches → drops observed
+}
+```
+
+Commit: `git commit -m "sim-runtime: add integration tests for start + multi-subscriber + actuation routing"`.
+
+### Chunk 4 exit checklist
+
+- [ ] `cargo test -p sim-runtime --all-features` ≥ 15 tests pass (Chunks 3+4 combined)
+- [ ] `SimulationRuntime::start / shutdown / subscribe_snapshots / send_actuation / subscribe_health / world_descriptor` all working
+- [ ] `/sim/health` and `/sim/descriptor` queues receive data
+- [ ] Multi-subscriber broker works
+- [ ] Actuation QoS lane routing works
+- [ ] 9 commits
+
+---
+
+## Chunk 5: `norma_sim` Python package — world + scheduler
+
+**Purpose:** Create `software/sim-server/` with the Python package that the sim-runtime's `ChildProcessBackend` launches. Implements manifest loading (with source_hash verification), MuJoCo model ownership, capability-aware unit conversions, actuation mapping, snapshot building, and the scheduler. **Zero ST3215 references** (CI-enforced).
+
+**Exit criteria:**
+- `software/sim-server/pyproject.toml` installable via `pip install -e software/sim-server/`
+- `norma_sim` importable as `python -c "import norma_sim"`
+- `cd software/sim-server && pytest tests/world/` ≥ 10 tests pass
+- `grep -ri "st3215" software/sim-server/norma_sim/` empty
+- Source_hash verification against Chunk 1's MJCF works
+- ★ P0 `test_capabilities_gripper_roundtrip` passes
+- ★ P0 `test_mimic_gripper_equality_works` passes
+- 10 commits
+
+### Task 5.1: `sim-server` package skeleton
+
+**Files:**
+- Create: `software/sim-server/pyproject.toml`
+- Create: `software/sim-server/README.md` (stub; smoke-test checklist added in Chunk 8)
+- Create: `software/sim-server/norma_sim/__init__.py`
+- Create: `software/sim-server/norma_sim/{world,scheduler,ipc}/__init__.py`
+- Create: `software/sim-server/tests/conftest.py`
+
+- [ ] **Step 1: `pyproject.toml`**
+
+```toml
+# software/sim-server/pyproject.toml
+[project]
+name = "norma-sim"
+version = "0.1.0"
+description = "NormaCore Python simulation server (MuJoCo-backed)"
+requires-python = ">=3.11"
+dependencies = [
+    "mujoco>=3.2,<4",
+    "numpy>=1.26",
+    "protobuf>=4",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff", "mypy"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["norma_sim*"]
+```
+
+- [ ] **Step 2: Package structure**
+
+```bash
+mkdir -p software/sim-server/norma_sim/{world,scheduler,ipc}
+mkdir -p software/sim-server/tests/{world,ipc,integration}
+mkdir -p software/sim-server/scripts
+touch software/sim-server/norma_sim/__init__.py \
+      software/sim-server/norma_sim/world/__init__.py \
+      software/sim-server/norma_sim/scheduler/__init__.py \
+      software/sim-server/norma_sim/ipc/__init__.py
+```
+
+Each `__init__.py` can be empty.
+
+- [ ] **Step 3: `tests/conftest.py`**
+
+```python
+# software/sim-server/tests/conftest.py
+from pathlib import Path
+import pytest
+
+@pytest.fixture
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+@pytest.fixture
+def world_yaml_path(repo_root: Path) -> Path:
+    return repo_root / "hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml"
+
+@pytest.fixture
+def mjcf_path(repo_root: Path) -> Path:
+    return repo_root / "hardware/elrobot/simulation/worlds/elrobot_follower.xml"
+```
+
+- [ ] **Step 4: Install and verify**
+
+```bash
+pip install -e software/sim-server/
+python -c "import norma_sim; print('OK')"
+cd software/sim-server && pytest tests/ -v
+```
+
+Expected: pip install succeeds, import OK, pytest runs with 0 collected.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add software/sim-server/
+git commit -m "sim-server: create norma_sim package skeleton with pyproject.toml"
+```
+
+### Task 5.2: `logging_setup.py` (JsonFormatter)
+
+Full implementation from spec §12.3:
+
+```python
+# software/sim-server/norma_sim/logging_setup.py
+"""JSON structured logging per spec §12.3."""
+import json
+import logging
+import sys
+from datetime import datetime, timezone
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+            "level": record.levelname,
+            "component": record.name,
+            "msg": record.getMessage(),
+            **(getattr(record, "extra_fields", {}) or {}),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def configure_logging(level: str = "INFO") -> None:
+    """Set up stdlib logging with JsonFormatter on stderr."""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(JsonFormatter())
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(level)
+```
+
+Test: `tests/test_logging_setup.py` — verify a log record emits valid JSON with the expected fields.
+
+Commit: `git commit -m "sim-server: add JsonFormatter logging setup"`.
+
+### Task 5.3: `world/manifest.py` — dataclass loader + source_hash verification
+
+Full implementation from Chunk 1 Task 1.3 rationale:
+
+```python
+# software/sim-server/norma_sim/world/manifest.py
+"""World manifest loader + source_hash verification."""
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+import yaml
+
+
+@dataclass(frozen=True)
+class ActuatorCapability:
+    kind: str  # "REVOLUTE_POSITION" | "PRISMATIC_POSITION" | "GRIPPER_PARALLEL"
+    limit_min: Optional[float] = None
+    limit_max: Optional[float] = None
+    effort_limit: Optional[float] = None
+    velocity_limit: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class GripperMimic:
+    joint: str
+    multiplier: float
+
+
+@dataclass(frozen=True)
+class GripperMeta:
+    primary_joint_range_rad: tuple
+    normalized_range: tuple
+    mimic_joints: tuple  # tuple of GripperMimic
+
+
+@dataclass(frozen=True)
+class ActuatorManifest:
+    actuator_id: str
+    display_name: str
+    urdf_joint: str
+    mjcf_actuator: str
+    capability: ActuatorCapability
+    actuator_gains: dict
+    gripper: Optional[GripperMeta] = None
+
+
+@dataclass(frozen=True)
+class SensorManifest:
+    sensor_id: str
+    display_name: str
+    capability_kind: str
+    source: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RobotManifest:
+    robot_id: str
+    actuators: tuple
+    sensors: tuple
+
+
+@dataclass(frozen=True)
+class SceneConfig:
+    timestep: float
+    gravity: tuple
+    integrator: str
+    solver: str
+    iterations: int
+
+
+@dataclass(frozen=True)
+class WorldManifest:
+    world_name: str
+    scene: SceneConfig
+    robots: tuple
+    urdf_path: Path
+    mjcf_path: Path
+
+
+def load_manifest(manifest_path: Path) -> WorldManifest:
+    with manifest_path.open() as f:
+        raw = yaml.safe_load(f)
+
+    manifest_dir = manifest_path.parent
+    urdf_path = (manifest_dir / raw["urdf_source"]).resolve()
+    mjcf_path = (manifest_dir / raw["mjcf_output"]).resolve()
+
+    scene = SceneConfig(
+        timestep=float(raw["scene"]["timestep"]),
+        gravity=tuple(raw["scene"]["gravity"]),
+        integrator=raw["scene"]["integrator"],
+        solver=raw["scene"]["solver"],
+        iterations=int(raw["scene"]["iterations"]),
+    )
+
+    robots = []
+    for r in raw["robots"]:
+        actuators = tuple(_parse_actuator(a) for a in r["actuators"])
+        sensors = tuple(_parse_sensor(s) for s in r.get("sensors", []))
+        robots.append(RobotManifest(
+            robot_id=r["robot_id"],
+            actuators=actuators,
+            sensors=sensors,
+        ))
+
+    return WorldManifest(
+        world_name=raw["world_name"],
+        scene=scene,
+        robots=tuple(robots),
+        urdf_path=urdf_path,
+        mjcf_path=mjcf_path,
+    )
+
+
+def _parse_actuator(raw: dict) -> ActuatorManifest:
+    cap_raw = raw["capability"]
+    cap = ActuatorCapability(
+        kind=cap_raw["kind"],
+        limit_min=cap_raw.get("limit_min"),
+        limit_max=cap_raw.get("limit_max"),
+        effort_limit=cap_raw.get("effort_limit"),
+        velocity_limit=cap_raw.get("velocity_limit"),
+    )
+    gripper = None
+    if cap.kind == "GRIPPER_PARALLEL":
+        g_raw = raw.get("gripper")
+        if g_raw is None:
+            raise ValueError(
+                f"actuator '{raw['actuator_id']}' has capability GRIPPER_PARALLEL "
+                f"but no 'gripper:' metadata"
+            )
+        mimic = tuple(
+            GripperMimic(joint=m["joint"], multiplier=float(m["multiplier"]))
+            for m in g_raw["mimic_joints"]
+        )
+        gripper = GripperMeta(
+            primary_joint_range_rad=tuple(g_raw["primary_joint_range_rad"]),
+            normalized_range=tuple(g_raw["normalized_range"]),
+            mimic_joints=mimic,
+        )
+    return ActuatorManifest(
+        actuator_id=raw["actuator_id"],
+        display_name=raw["display_name"],
+        urdf_joint=raw["urdf_joint"],
+        mjcf_actuator=raw["mjcf_actuator"],
+        capability=cap,
+        actuator_gains=dict(raw["actuator_gains"]),
+        gripper=gripper,
+    )
+
+
+def _parse_sensor(raw: dict) -> SensorManifest:
+    return SensorManifest(
+        sensor_id=raw["sensor_id"],
+        display_name=raw["display_name"],
+        capability_kind=raw["capability"]["kind"],
+        source=raw.get("source"),
+    )
+
+
+def verify_source_hash(manifest_path: Path, mjcf_path: Path) -> None:
+    """Raise ValueError if MJCF's embedded source_hash doesn't match
+    sha256(urdf + world.yaml)."""
+    with manifest_path.open() as f:
+        raw = yaml.safe_load(f)
+    manifest_dir = manifest_path.parent
+    urdf_path = (manifest_dir / raw["urdf_source"]).resolve()
+
+    urdf_bytes = urdf_path.read_bytes()
+    manifest_bytes = manifest_path.read_bytes()
+    expected = hashlib.sha256(urdf_bytes + manifest_bytes).hexdigest()
+
+    mjcf_text = mjcf_path.read_text()
+    m = re.search(r"source_hash=sha256:([0-9a-f]{64})", mjcf_text)
+    if m is None:
+        raise ValueError(
+            f"MJCF at {mjcf_path} has no source_hash comment. Run 'make regen-mjcf'."
+        )
+    found = m.group(1)
+    if found != expected:
+        raise ValueError(
+            f"MJCF source_hash mismatch. Run 'make regen-mjcf'.\n"
+            f"  expected: sha256:{expected[:16]}...\n"
+            f"  found:    sha256:{found[:16]}..."
+        )
+```
+
+Tests (`tests/world/test_manifest_load.py`):
+- `test_manifest_load_happy`: loads the Chunk 1 manifest, asserts 1 robot, 8 actuators
+- `test_manifest_missing_gripper_fields_raises`: feed a bad yaml to `load_manifest`, expect ValueError
+- `test_source_hash_matches`: loads the Chunk 1 MJCF, verifies source_hash
+- `test_source_hash_mismatch_raises`: writes a tampered MJCF to a tempfile, expect ValueError
+
+Commit: `git commit -m "sim-server: add world.manifest with source_hash verification"`.
+
+### Task 5.4: `world/capabilities.py` ★ (SOLE capability semantics module)
+
+```python
+# software/sim-server/norma_sim/world/capabilities.py
+"""Capability-aware unit conversions. This is the ONLY module with
+capability semantics; everything else delegates here."""
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .manifest import ActuatorManifest
+
+
+def command_value_to_ctrl(command_value: float, actuator: "ActuatorManifest") -> float:
+    """Translate capability-keyed command value into MJCF actuator ctrl value.
+
+    REVOLUTE_POSITION / PRISMATIC_POSITION: identity
+    GRIPPER_PARALLEL: [0..1] → primary joint rad range
+    """
+    kind = actuator.capability.kind
+    if kind in ("REVOLUTE_POSITION", "PRISMATIC_POSITION"):
+        return command_value
+    if kind == "GRIPPER_PARALLEL":
+        g = actuator.gripper
+        if g is None:
+            raise ValueError("GRIPPER_PARALLEL actuator has no gripper metadata")
+        norm_lo, norm_hi = g.normalized_range
+        joint_lo, joint_hi = g.primary_joint_range_rad
+        if norm_hi == norm_lo:
+            raise ValueError("normalized_range has zero span")
+        t = (command_value - norm_lo) / (norm_hi - norm_lo)
+        return joint_lo + t * (joint_hi - joint_lo)
+    raise ValueError(f"unsupported capability kind: {kind}")
+
+
+def qpos_to_position_value(qpos: float, actuator: "ActuatorManifest") -> float:
+    """Inverse of command_value_to_ctrl."""
+    kind = actuator.capability.kind
+    if kind in ("REVOLUTE_POSITION", "PRISMATIC_POSITION"):
+        return qpos
+    if kind == "GRIPPER_PARALLEL":
+        g = actuator.gripper
+        joint_lo, joint_hi = g.primary_joint_range_rad
+        norm_lo, norm_hi = g.normalized_range
+        if joint_hi == joint_lo:
+            raise ValueError("primary_joint_range_rad has zero span")
+        t = (qpos - joint_lo) / (joint_hi - joint_lo)
+        return norm_lo + t * (norm_hi - norm_lo)
+    raise ValueError(f"unsupported capability kind: {kind}")
+```
+
+Tests (`tests/world/test_capabilities.py`) ★ P0:
+
+```python
+import pytest
+from norma_sim.world.capabilities import command_value_to_ctrl, qpos_to_position_value
+from norma_sim.world.manifest import (
+    ActuatorCapability, ActuatorManifest, GripperMeta, GripperMimic
+)
+
+
+def _revolute():
+    return ActuatorManifest(
+        actuator_id="rev_motor_01",
+        display_name="Test",
+        urdf_joint="rev_motor_01",
+        mjcf_actuator="act_motor_01",
+        capability=ActuatorCapability(kind="REVOLUTE_POSITION"),
+        actuator_gains={"kp": 15.0, "kv": 0.5},
+    )
+
+
+def _gripper():
+    return ActuatorManifest(
+        actuator_id="rev_motor_08",
+        display_name="Gripper",
+        urdf_joint="rev_motor_08",
+        mjcf_actuator="act_motor_08",
+        capability=ActuatorCapability(kind="GRIPPER_PARALLEL"),
+        actuator_gains={"kp": 10.0, "kv": 0.3},
+        gripper=GripperMeta(
+            primary_joint_range_rad=(0.0, 2.2028),
+            normalized_range=(0.0, 1.0),
+            mimic_joints=(
+                GripperMimic(joint="rev_motor_08_1", multiplier=-0.0115),
+                GripperMimic(joint="rev_motor_08_2", multiplier=0.0115),
+            ),
+        ),
+    )
+
+
+def test_capabilities_revolute_identity():
+    a = _revolute()
+    assert command_value_to_ctrl(0.5, a) == 0.5
+    assert qpos_to_position_value(0.5, a) == 0.5
+
+
+def test_capabilities_gripper_roundtrip():
+    """★ P0: command 0.5 → ctrl ≈ mid rad → back to 0.5 via qpos_to_position_value."""
+    a = _gripper()
+    for v in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        ctrl = command_value_to_ctrl(v, a)
+        assert 0.0 <= ctrl <= 2.2028 + 1e-9, f"ctrl out of range for v={v}: {ctrl}"
+        back = qpos_to_position_value(ctrl, a)
+        assert abs(back - v) < 1e-9, f"roundtrip failed for v={v}: back={back}"
+
+
+def test_capabilities_gripper_missing_metadata_raises():
+    a = _gripper()
+    object.__setattr__(a, "gripper", None)
+    with pytest.raises(ValueError):
+        command_value_to_ctrl(0.5, a)
+```
+
+Commit: `git commit -m "sim-server: add capabilities module + P0 gripper roundtrip test"`.
+
+### Tasks 5.5–5.9: `world/model.py`, `descriptor.py`, `actuation.py`, `snapshot.py`, `test_mimic_gripper.py`
+
+Each task is a focused module + its tests. Skipping verbose code inlining; the implementer follows the pattern established in Tasks 5.3 and 5.4:
+
+**Task 5.5 `world/model.py`**: `MuJoCoWorld` wrapper (MjModel + MjData + threading.Lock). Tests: loads Chunk 1 MJCF without error.
+
+**Task 5.6 `world/descriptor.py`**: manifest → `norma_sim.world.v1.WorldDescriptor` protobuf message. Requires `make protobuf` generating the Python proto under `target/gen_python/protobuf/sim/world.py` (or similar). Add a check in `tests/world/test_descriptor_build.py` that `WorldDescriptor` is importable before the test runs.
+
+**Task 5.7 `world/actuation.py`**: `ActuationApplier` class with `drain_and_apply(batch)` that iterates ActuationCommand, looks up actuator_idx via `model.actuator_id(mjcf_actuator)`, calls `capabilities.command_value_to_ctrl`, assigns to `data.ctrl[idx]`.
+
+**Task 5.8 `world/snapshot.py`**: `SnapshotBuilder` class with `build(clock)` that iterates registered actuators, reads `data.qpos[joint_qpos_addr]`, calls `capabilities.qpos_to_position_value`, builds `ActuatorState` message, returns `WorldSnapshot`.
+
+**Task 5.9 `tests/world/test_mimic_gripper.py`** ★ P0 (pytest version of Chunk 1 Task 1.7):
+
+```python
+import mujoco
+
+
+def test_mimic_gripper_equality_works(mjcf_path):
+    """★ P0: driving rev_motor_08 to 1.0 rad moves mimic joints to ±0.0115."""
+    model = mujoco.MjModel.from_xml_path(str(mjcf_path))
+    data = mujoco.MjData(model)
+
+    act8 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "act_motor_08")
+    j08 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "rev_motor_08")
+    j08_1 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "rev_motor_08_1")
+    j08_2 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "rev_motor_08_2")
+
+    data.ctrl[act8] = 1.0
+    for _ in range(500):
+        mujoco.mj_step(model, data)
+
+    q08 = data.qpos[model.jnt_qposadr[j08]]
+    q08_1 = data.qpos[model.jnt_qposadr[j08_1]]
+    q08_2 = data.qpos[model.jnt_qposadr[j08_2]]
+
+    assert abs(q08 - 1.0) < 0.1
+    assert abs(q08_1 - (-0.0115)) < 0.002
+    assert abs(q08_2 - 0.0115) < 0.002
+```
+
+Commits: 5.5 model, 5.6 descriptor, 5.7 actuation, 5.8 snapshot, 5.9 mimic test (5 commits).
+
+### Task 5.10: `scheduler/base.py` + `scheduler/realtime.py`
+
+Full implementation from spec §8.3–8.4. `RealTimeScheduler` with:
+- `t0_wall_ns = monotonic_ns()` captured once at loop start
+- `deadline_ns = t0_wall_ns + tick * physics_ns`
+- `slack_ns = deadline_ns - monotonic_ns()` pacing
+- Overrun: don't catch up, just increment counter and log warn
+
+Tests: `test_scheduler_realtime_pacing` — run scheduler for 100ms wall, verify tick count ≈ physics_hz * 0.1 within 5% tolerance.
+
+Commit: `git commit -m "sim-server: add WorldScheduler protocol + RealTimeScheduler"`.
+
+### Task 5.11: Architecture invariant + wrap-up
+
+```bash
+grep -ri "st3215" software/sim-server/norma_sim/ && echo "FAIL" || echo "invariant ✓"
+cd software/sim-server && pytest tests/world/ -v
+```
+
+Expected: invariant clean, ≥ 10 tests pass including ★ `test_capabilities_gripper_roundtrip` and ★ `test_mimic_gripper_equality_works`.
+
+No commit in this task (verification only).
+
+### Chunk 5 exit checklist
+
+- [ ] `pip install -e software/sim-server/` succeeds
+- [ ] `cd software/sim-server && pytest tests/world/` ≥ 10 tests pass
+- [ ] ★ P0 `test_capabilities_gripper_roundtrip` passes
+- [ ] ★ P0 `test_mimic_gripper_equality_works` passes
+- [ ] `grep -ri "st3215" software/sim-server/norma_sim/` empty
+- [ ] 10 commits (Tasks 5.1–5.10)
+
+---
+
+## Chunk 6: `norma_sim` Python package — ipc + CLI + diagnostic tools
+
+**Purpose:** Complete the Python package: UDS server, protobuf codec, per-session handshake, CLI entry point (so `python -m norma_sim --manifest <path>` actually runs), and three diagnostic scripts.
+
+**Exit criteria:**
+- `python -m norma_sim --manifest <path> --socket /tmp/x.sock` binds UDS and accepts connections
+- ★★ `test_multi_client_fan_out` passes (two clients subscribe, both receive snapshots)
+- `test_full_loop` subprocess integration test passes
+- Three diagnostic scripts work against a running sim
+- Still zero ST3215 references
+- 10 commits
+
+### Task 6.1: `ipc/framing.py`
+
+```python
+# software/sim-server/norma_sim/ipc/framing.py
+import asyncio
+import struct
+
+MAX_FRAME_LEN = 16 * 1024 * 1024  # 16 MiB
+
+
+async def read_frame(reader: asyncio.StreamReader) -> bytes:
+    header = await reader.readexactly(4)
+    (length,) = struct.unpack(">I", header)
+    if length > MAX_FRAME_LEN:
+        raise ValueError(f"frame too large: {length}")
+    return await reader.readexactly(length)
+
+
+async def write_frame(writer: asyncio.StreamWriter, payload: bytes) -> None:
+    header = struct.pack(">I", len(payload))
+    writer.write(header + payload)
+    await writer.drain()
+```
+
+Tests: `test_framing_roundtrip_small` + `test_framing_roundtrip_1mb_boundary` (stream data through an in-memory pipe).
+
+Commit: `git commit -m "sim-server: add ipc.framing with 1MB boundary test"`.
+
+### Task 6.2: `ipc/codec.py`
+
+Wrap the generated `norma_sim.world.v1.Envelope` protobuf:
+
+```python
+# software/sim-server/norma_sim/ipc/codec.py
+"""Envelope encode/decode helpers wrapping the generated protobuf."""
+# NOTE: The generated Python proto module path depends on where
+# make protobuf places it. Common outputs: target/gen_python/protobuf/sim/world_pb2.py
+# The test fixture needs to resolve this; if the import path is unusual,
+# add a site-packages symlink or adjust sys.path in conftest.py.
+from norma_sim.world.v1 import Envelope  # adjust import path if make protobuf produces different naming
+
+
+def encode_envelope(env: "Envelope") -> bytes:
+    return env.SerializeToString()
+
+
+def decode_envelope(data: bytes) -> "Envelope":
+    env = Envelope()
+    env.ParseFromString(data)
+    return env
+```
+
+**Important note**: the import path for the generated proto depends on how `make protobuf` configures gremlin_py output. Verify by inspecting `Makefile`'s `protobuf` target and the existing generated Python files (e.g., where `station_py` imports `ST3215` protos). Adjust the import accordingly.
+
+Tests: roundtrip Hello / Welcome / Goodbye envelopes.
+
+Commit: `git commit -m "sim-server: add ipc.codec Envelope encode/decode"`.
+
+### Task 6.3: `ipc/session.py` — per-client handshake + reader/writer
+
+```python
+# software/sim-server/norma_sim/ipc/session.py
+"""Per-client async session: handshake + bidirectional streams."""
+import asyncio
+import logging
+from typing import Callable
+
+from ..world.manifest import WorldManifest
+from .codec import decode_envelope, encode_envelope
+from .framing import read_frame, write_frame
+
+PROTOCOL_VERSION = 1
+
+logger = logging.getLogger("norma_sim.ipc.session")
+
+
+class ClientSession:
+    def __init__(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        manifest: WorldManifest,
+        descriptor,  # WorldDescriptor proto
+        on_actuation: Callable,  # called with ActuationBatch
+        snapshot_queue: asyncio.Queue,  # per-session queue of snapshots to send
+        session_id: str,
+    ):
+        self.reader = reader
+        self.writer = writer
+        self.manifest = manifest
+        self.descriptor = descriptor
+        self.on_actuation = on_actuation
+        self.snapshot_queue = snapshot_queue
+        self.session_id = session_id
+
+    async def run(self) -> None:
+        """Run the session: handshake → reader + writer coroutines."""
+        try:
+            await self._handshake()
+            await asyncio.gather(self._reader_loop(), self._writer_loop())
+        except Exception as e:
+            logger.warning("session %s ended: %s", self.session_id, e)
+        finally:
+            self.writer.close()
+            try:
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+
+    async def _handshake(self) -> None:
+        # Read Hello
+        frame = await read_frame(self.reader)
+        env = decode_envelope(frame)
+        if not env.HasField("hello"):
+            raise ValueError("expected Hello")
+        hello = env.hello
+        if hello.protocol_version != PROTOCOL_VERSION:
+            # Send Error and close
+            from norma_sim.world.v1 import Error, Envelope
+            err_env = Envelope()
+            err_env.error.code = Error.E_PROTOCOL_VERSION
+            err_env.error.message = f"server version {PROTOCOL_VERSION}, client {hello.protocol_version}"
+            await write_frame(self.writer, encode_envelope(err_env))
+            raise ValueError("protocol version mismatch")
+
+        # Send Welcome with descriptor
+        from norma_sim.world.v1 import Envelope
+        welcome_env = Envelope()
+        welcome_env.welcome.protocol_version = PROTOCOL_VERSION
+        welcome_env.welcome.world.CopyFrom(self.descriptor)
+        await write_frame(self.writer, encode_envelope(welcome_env))
+        logger.info(
+            "session %s handshake complete client_role=%s client_id=%s",
+            self.session_id, hello.client_role, hello.client_id,
+        )
+
+    async def _reader_loop(self) -> None:
+        while True:
+            try:
+                frame = await read_frame(self.reader)
+            except asyncio.IncompleteReadError:
+                return
+            env = decode_envelope(frame)
+            if env.HasField("actuation"):
+                self.on_actuation(env.actuation)
+            elif env.HasField("goodbye"):
+                return
+            # Other payloads ignored
+
+    async def _writer_loop(self) -> None:
+        while True:
+            snapshot = await self.snapshot_queue.get()
+            if snapshot is None:
+                return
+            from norma_sim.world.v1 import Envelope
+            env = Envelope()
+            env.snapshot.CopyFrom(snapshot)
+            await write_frame(self.writer, encode_envelope(env))
+```
+
+Tests: `test_handshake_happy_path` (send Hello, expect Welcome), `test_handshake_wrong_version` (send wrong version, expect Error).
+
+Commit: `git commit -m "sim-server: add ipc.session with handshake + reader/writer"`.
+
+### Task 6.4: `ipc/server.py` — asyncio UDS server
+
+```python
+# software/sim-server/norma_sim/ipc/server.py
+import asyncio
+import logging
+import os
+import uuid
+from pathlib import Path
+from typing import Callable
+
+from ..world.manifest import WorldManifest
+from .session import ClientSession
+
+logger = logging.getLogger("norma_sim.ipc.server")
+
+
+class IpcServer:
+    def __init__(
+        self,
+        socket_path: Path,
+        manifest: WorldManifest,
+        descriptor,  # WorldDescriptor proto
+        on_actuation: Callable,  # called by any session when an ActuationBatch arrives
+    ):
+        self.socket_path = socket_path
+        self.manifest = manifest
+        self.descriptor = descriptor
+        self.on_actuation = on_actuation
+        self.sessions: list[ClientSession] = []
+        self.server: asyncio.Server | None = None
+
+    async def start(self) -> None:
+        # Delete stale socket file from previous run
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+        self.server = await asyncio.start_unix_server(
+            self._handle_client,
+            path=str(self.socket_path),
+        )
+        os.chmod(self.socket_path, 0o600)
+        logger.info("listening on %s", self.socket_path)
+
+    async def _handle_client(self, reader, writer) -> None:
+        session_id = str(uuid.uuid4())
+        snapshot_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
+        session = ClientSession(
+            reader=reader,
+            writer=writer,
+            manifest=self.manifest,
+            descriptor=self.descriptor,
+            on_actuation=self.on_actuation,
+            snapshot_queue=snapshot_queue,
+            session_id=session_id,
+        )
+        self.sessions.append(session)
+        try:
+            await session.run()
+        finally:
+            self.sessions.remove(session)
+
+    def broadcast_snapshot(self, snapshot) -> None:
+        """Called by the scheduler thread: fan out to all connected sessions."""
+        for s in self.sessions:
+            try:
+                s.snapshot_queue.put_nowait(snapshot)
+            except asyncio.QueueFull:
+                logger.warning("session %s snapshot queue full, dropping", s.session_id)
+
+    async def stop(self) -> None:
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+```
+
+Commit: `git commit -m "sim-server: add ipc.server asyncio UDS server with fan-out"`.
+
+### Task 6.5: `cli.py` + `__main__.py`
+
+```python
+# software/sim-server/norma_sim/cli.py
+import argparse
+import asyncio
+import logging
+import os
+import sys
+import threading
+from pathlib import Path
+
+from .logging_setup import configure_logging
+from .world.manifest import load_manifest, verify_source_hash
+from .world.model import MuJoCoWorld
+from .world.descriptor import build_world_descriptor
+from .world.actuation import ActuationApplier
+from .world.snapshot import SnapshotBuilder
+from .scheduler.realtime import RealTimeScheduler
+from .ipc.server import IpcServer
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="norma_sim")
+    ap.add_argument("--manifest", type=Path, required=True, help="Path to world.yaml manifest")
+    ap.add_argument("--socket", type=Path, default=None, help="UDS bind path (or use $NORMA_SIM_SOCKET_PATH)")
+    ap.add_argument("--physics-hz", type=int, default=500)
+    ap.add_argument("--publish-hz", type=int, default=100)
+    ap.add_argument("--log-level", default="INFO")
+    args = ap.parse_args()
+
+    configure_logging(args.log_level)
+    log = logging.getLogger("norma_sim.cli")
+
+    socket_path = args.socket
+    if socket_path is None:
+        env_path = os.environ.get("NORMA_SIM_SOCKET_PATH")
+        if not env_path:
+            log.critical("no --socket and no $NORMA_SIM_SOCKET_PATH set")
+            return 1
+        socket_path = Path(env_path)
+
+    # Load + verify manifest and MJCF
+    manifest = load_manifest(args.manifest)
+    verify_source_hash(args.manifest, manifest.mjcf_path)
+    log.info("manifest loaded: world=%s robots=%d", manifest.world_name, len(manifest.robots))
+
+    # Initialize MuJoCo world
+    world = MuJoCoWorld(manifest.mjcf_path)
+
+    # Build WorldDescriptor from manifest
+    descriptor = build_world_descriptor(manifest)
+
+    # Wire actuation + snapshot
+    applier = ActuationApplier(world, manifest)
+    builder = SnapshotBuilder(world, manifest)
+
+    # Start asyncio + IpcServer
+    loop = asyncio.new_event_loop()
+
+    def on_actuation(batch):
+        applier.drain_and_apply(batch)
+
+    server = IpcServer(
+        socket_path=socket_path,
+        manifest=manifest,
+        descriptor=descriptor,
+        on_actuation=on_actuation,
+    )
+
+    # Start the IpcServer on the main asyncio loop
+    loop.run_until_complete(server.start())
+
+    # Start the scheduler on a separate thread so the physics loop doesn't
+    # block asyncio. The scheduler calls `server.broadcast_snapshot(snap)`
+    # from the thread, which is safe because `asyncio.Queue.put_nowait` is
+    # thread-safe-ish (sessions' queues live in the asyncio loop, so the
+    # scheduler should call `loop.call_soon_threadsafe` instead for strict
+    # correctness — simplification below, upgrade in MVP-2 if broken).
+    scheduler = RealTimeScheduler(
+        physics_hz=args.physics_hz,
+        publish_hz=args.publish_hz,
+        render_hz=None,
+    )
+    stopping = threading.Event()
+
+    def physics_thread():
+        def publish_cb(snap):
+            loop.call_soon_threadsafe(server.broadcast_snapshot, snap)
+        scheduler.run_until_stopped(world, builder, publish_cb, stopping)
+
+    t = threading.Thread(target=physics_thread, daemon=True)
+    t.start()
+
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        stopping.set()
+        loop.run_until_complete(server.stop())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+`__main__.py`:
+```python
+from .cli import main
+import sys
+sys.exit(main())
+```
+
+**Note on the thread/asyncio bridge**: the exact interaction between `RealTimeScheduler` (thread) and `IpcServer.broadcast_snapshot` (asyncio Queue) is subtle. The plan above uses `loop.call_soon_threadsafe`; verify this is actually correct for `asyncio.Queue.put_nowait`. If the tests in Task 6.9 fail due to cross-thread issues, the safer fix is to have the scheduler push snapshots into a `queue.Queue` (stdlib, thread-safe) and an asyncio task drains it.
+
+Commit: `git commit -m "sim-server: add CLI + __main__ entry point"`.
+
+### Tasks 6.6–6.8: Diagnostic scripts
+
+Three Python scripts in `software/sim-server/scripts/`:
+
+**`inspect.py`** — Connect to a running sim, subscribe to WorldSnapshot, print each update. Uses `norma_sim.ipc.framing` + `norma_sim.ipc.codec`.
+
+**`probe_manifest.py`** — Load a manifest, verify source_hash, print WorldDescriptor summary. No network.
+
+**`send_actuation.py`** — Connect to a running sim, send one ActuationBatch (constructed from CLI args).
+
+Each script is ~100-150 lines and shares the ipc codec helpers. Each is its own commit: `git commit -m "sim-server: add inspect.py diagnostic tool"` etc.
+
+### Task 6.9: Integration tests
+
+**`tests/integration/test_full_loop.py`**:
+
+```python
+import asyncio
+import os
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_full_loop(world_yaml_path, tmp_path):
+    """Launch `python -m norma_sim` as subprocess, connect, handshake, actuate, observe."""
+    socket_path = tmp_path / "sim.sock"
+    env = os.environ.copy()
+    env["NORMA_SIM_SOCKET_PATH"] = str(socket_path)
+
+    proc = await asyncio.create_subprocess_exec(
+        "python", "-m", "norma_sim",
+        "--manifest", str(world_yaml_path),
+        "--physics-hz", "500",
+        "--publish-hz", "100",
+        env=env,
+    )
+
+    try:
+        # Wait for socket to appear (up to 5s)
+        for _ in range(50):
+            if socket_path.exists():
+                break
+            await asyncio.sleep(0.1)
+        assert socket_path.exists(), "sim server did not bind socket"
+
+        # Connect + handshake
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        # ... send Hello, read Welcome, send ActuationBatch, read snapshot ...
+    finally:
+        proc.terminate()
+        await proc.wait()
+```
+
+**`tests/integration/test_multi_client_fan_out.py`** ★★:
+
+```python
+@pytest.mark.asyncio
+async def test_multi_client_fan_out(world_yaml_path, tmp_path):
+    """Two clients connect to the same sim; both receive snapshots."""
+    # Similar subprocess launch ...
+    # Open two independent asyncio UnixStream connections
+    # Both do handshake
+    # Wait for at least one snapshot on each client
+    # Assert both snapshots have the same world_tick (they came from the same broadcast)
+```
+
+Commits for 6.9: `test_full_loop.py` + `test_multi_client_fan_out.py` + `test_subprocess_clean_shutdown.py` — 3 commits or 1 combined.
+
+### Task 6.10: Architecture invariant + Chunk 6 wrap-up
+
+```bash
+grep -ri "st3215" software/sim-server/norma_sim/ && echo "FAIL" || echo "invariant ✓"
+cd software/sim-server && pytest
+```
+
+Expected: invariant clean, all tests pass including ★★ `test_multi_client_fan_out`.
+
+No commit.
+
+### Chunk 6 exit checklist
+
+- [ ] `python -m norma_sim --manifest <path> --socket /tmp/x.sock` actually runs
+- [ ] ★★ `test_multi_client_fan_out` passes
+- [ ] `test_full_loop` passes
+- [ ] Three diagnostic scripts work
+- [ ] Architecture invariant (zero ST3215) still holds
+- [ ] 10 commits (Tasks 6.1–6.9, combinable)
+
+---
+
+## Chunk 7: `st3215-compat-bridge` crate
+
+**Purpose:** Build the bidirectional compat bridge that translates between the legacy ST3215 queue surfaces (global `commands` queue, `st3215/inference`, `st3215/meta`) and the generic sim-runtime API. This is the crate that makes "existing station_py / web UI clients work unchanged" true.
+
+**Exit criteria:**
+- `cargo build -p st3215-compat-bridge` green
+- `cargo test -p st3215-compat-bridge` ≥ 10 tests pass
+- `legacy_bus_serial` MUST start with `sim://` (enforced at bridge startup)
+- Bridge command_task subscribes to the REAL `station_iface::COMMANDS_QUEUE_ID = "commands"` queue
+- Bridge state_task packs WorldSnapshot to 71-byte dumps via `st3215-wire`
+- Bridge health_task monitors SimHealth and writes offline marker on termination
+- 8 commits
+
+### Task 7.1: Create crate skeleton
+
+```toml
+# software/sim-bridges/st3215-compat-bridge/Cargo.toml
+[package]
+name = "st3215-compat-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Bidirectional bridge between legacy ST3215 queues and generic SimulationRuntime."
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+thiserror = "1"
+log = "0.4"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+prost = "0.12"
+
+sim-runtime = { path = "../../sim-runtime" }
+st3215-wire = { path = "../../drivers/st3215-wire" }
+station-iface = { path = "../../station/shared/station-iface" }
+normfs = { path = "../../normfs" }  # adjust path
+# st3215 proto types for StationCommand filtering + st3215 Command decoding
+st3215 = { path = "../../drivers/st3215" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+```
+
+Create `src/lib.rs` with module declarations + empty stubs (pattern from Chunk 2 Task 2.1).
+
+Add `"software/sim-bridges/st3215-compat-bridge"` to workspace `Cargo.toml` members. **Also** add the parent directory if the workspace requires it, though Cargo discovers nested paths by default.
+
+Verify:
+```bash
+cargo build -p st3215-compat-bridge
+```
+
+Commit: `git commit -m "st3215-compat-bridge: create crate skeleton"`.
+
+### Task 7.2: `config.rs` — BridgeConfig with `sim://` enforcement
+
+**Note**: `St3215CompatBridgeConfig` lives in `station-iface` (not here) for the same reason `SimRuntimeConfig` does — to avoid circular crate deps (station-iface depends on neither, bridge depends on station-iface).
+
+Add to `station-iface/src/config.rs`:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct St3215CompatBridgeConfig {
+    pub enabled: bool,
+    #[serde(rename = "robot-id")]
+    pub robot_id: String,
+    #[serde(rename = "preset-path")]
+    pub preset_path: std::path::PathBuf,
+    #[serde(rename = "legacy-bus-serial")]
+    pub legacy_bus_serial: String,
+}
+
+impl St3215CompatBridgeConfig {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if !self.legacy_bus_serial.starts_with("sim://") {
+            return Err(
+                "legacy_bus_serial MUST start with 'sim://' to ensure \
+                 structural separation from real hardware bus serials"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Bridges {
+    #[serde(rename = "st3215_compat", default, skip_serializing_if = "Option::is_none")]
+    pub st3215_compat: Option<St3215CompatBridgeConfig>,
+}
+
+impl Bridges {
+    pub fn is_empty(&self) -> bool {
+        self.st3215_compat.is_none()
+    }
+}
+
+#[cfg(test)]
+mod bridge_config_tests {
+    use super::*;
+    #[test]
+    fn test_legacy_bus_serial_must_have_sim_prefix() {
+        let mut cfg = St3215CompatBridgeConfig {
+            enabled: true,
+            robot_id: "elrobot_follower".into(),
+            preset_path: "x.yaml".into(),
+            legacy_bus_serial: "my-custom-bus".into(),
+        };
+        assert!(cfg.validate().is_err());
+        cfg.legacy_bus_serial = "sim://bus0".into();
+        assert!(cfg.validate().is_ok());
+    }
+}
+```
+
+In `st3215-compat-bridge/src/lib.rs`:
+```rust
+pub use station_iface::config::{Bridges, St3215CompatBridgeConfig};
+```
+
+Commit: `git commit -m "station-iface: add St3215CompatBridgeConfig + Bridges with sim:// prefix enforcement"`.
+
+### Task 7.3: `preset_loader.rs` + `presets/elrobot-follower.yaml`
+
+Create `software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml`:
+
+```yaml
+robot_id: elrobot_follower
+legacy_bus_serial: "sim://bus0"
+motors:
+  - actuator_id: rev_motor_01
+    motor_id: 1
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+  - actuator_id: rev_motor_02
+    motor_id: 2
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+  # ... motors 3-7 same pattern ...
+  - actuator_id: rev_motor_08
+    motor_id: 8
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 0        # gripper primary starts at 0 rad
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+```
+
+Fill in motors 3-7. Verify the `offset_steps` values against the real driver's auto-calibration data in `software/drivers/st3215/src/auto_calibrate/elrobot.rs`. If the real values are not 2048 for all 7 revolute motors, use the real values (the demo won't work with wrong zero offsets).
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/preset_loader.rs
+use serde::Deserialize;
+use std::path::Path;
+use crate::errors::BridgeError;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RobotPreset {
+    pub robot_id: String,
+    pub legacy_bus_serial: String,
+    pub motors: Vec<MotorEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MotorEntry {
+    pub actuator_id: String,
+    pub motor_id: u8,
+    pub min_angle_steps: u16,
+    pub max_angle_steps: u16,
+    pub offset_steps: i16,
+    pub torque_limit: u16,
+    pub voltage_nominal_v: f32,
+}
+
+pub fn load_preset(path: &Path) -> Result<RobotPreset, BridgeError> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| BridgeError::PresetLoad(format!("read {}: {}", path.display(), e)))?;
+    let preset: RobotPreset = serde_yaml::from_str(&content)
+        .map_err(|e| BridgeError::PresetLoad(format!("parse {}: {}", path.display(), e)))?;
+    if !preset.legacy_bus_serial.starts_with("sim://") {
+        return Err(BridgeError::PresetLoad(format!(
+            "preset '{}' legacy_bus_serial '{}' missing 'sim://' prefix",
+            path.display(), preset.legacy_bus_serial
+        )));
+    }
+    Ok(preset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_load_preset_happy() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "robot_id: test\nlegacy_bus_serial: \"sim://test\"\nmotors: []").unwrap();
+        let p = load_preset(f.path()).unwrap();
+        assert_eq!(p.robot_id, "test");
+    }
+
+    #[test]
+    fn test_load_preset_missing_sim_prefix() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "robot_id: test\nlegacy_bus_serial: \"bus0\"\nmotors: []").unwrap();
+        assert!(load_preset(f.path()).is_err());
+    }
+}
+```
+
+Commit: `git commit -m "st3215-compat-bridge: add preset_loader + elrobot-follower.yaml"`.
+
+### Task 7.4: `actuator_map.rs`
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/actuator_map.rs
+use std::collections::HashMap;
+use crate::preset_loader::{MotorEntry, RobotPreset};
+
+pub struct ActuatorMap {
+    pub by_motor_id: HashMap<u8, MotorEntry>,
+    pub by_actuator_id: HashMap<String, u8>,
+}
+
+impl ActuatorMap {
+    pub fn from_preset(preset: &RobotPreset) -> Self {
+        let mut by_motor_id = HashMap::new();
+        let mut by_actuator_id = HashMap::new();
+        for m in &preset.motors {
+            by_motor_id.insert(m.motor_id, m.clone());
+            by_actuator_id.insert(m.actuator_id.clone(), m.motor_id);
+        }
+        Self { by_motor_id, by_actuator_id }
+    }
+
+    pub fn get_by_motor_id(&self, motor_id: u8) -> Option<&MotorEntry> {
+        self.by_motor_id.get(&motor_id)
+    }
+
+    pub fn get_motor_id_by_actuator(&self, actuator_id: &str) -> Option<u8> {
+        self.by_actuator_id.get(actuator_id).copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bidirectional_lookup() {
+        let preset = RobotPreset {
+            robot_id: "test".into(),
+            legacy_bus_serial: "sim://test".into(),
+            motors: vec![MotorEntry {
+                actuator_id: "rev_motor_01".into(),
+                motor_id: 1,
+                min_angle_steps: 0,
+                max_angle_steps: 4095,
+                offset_steps: 2048,
+                torque_limit: 500,
+                voltage_nominal_v: 12.0,
+            }],
+        };
+        let map = ActuatorMap::from_preset(&preset);
+        assert!(map.get_by_motor_id(1).is_some());
+        assert_eq!(map.get_motor_id_by_actuator("rev_motor_01"), Some(1));
+    }
+}
+```
+
+Commit: `git commit -m "st3215-compat-bridge: add ActuatorMap"`.
+
+### Task 7.5: `command_task.rs` — THE critical compat piece
+
+This is the most important task in Chunk 7. It must mirror the real `st3215/driver.rs:74-112` command decoding logic exactly, then translate to generic `ActuationCommand`.
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/command_task.rs
+use crate::actuator_map::ActuatorMap;
+use crate::errors::BridgeError;
+use crate::preset_loader::RobotPreset;
+use bytes::Bytes;
+use normfs::NormFS;
+use prost::Message;
+use sim_runtime::proto::{
+    actuation_command::Intent, ActuationBatch, ActuationCommand, ActuatorRef,
+    DisableTorque, EnableTorque, QosLane, SetPosition,
+};
+use sim_runtime::SimulationRuntime;
+use station_iface::{iface_proto::{commands, drivers}, COMMANDS_QUEUE_ID};
+use std::sync::Arc;
+
+/// Spawn the command task. It subscribes to the global `commands` queue
+/// (NOT a made-up `st3215/commands` name) and filters by
+/// StationCommandType::StcSt3215Command + target_bus_serial, exactly mirroring
+/// the real driver's subscription in st3215/driver.rs:69-113.
+pub async fn spawn_command_task(
+    normfs: Arc<NormFS>,
+    sim_runtime: Arc<SimulationRuntime>,
+    actuator_map: Arc<ActuatorMap>,
+    preset: Arc<RobotPreset>,
+    robot_id: String,
+    legacy_bus_serial: String,
+) -> Result<(), BridgeError> {
+    let commands_queue_id = normfs.resolve(COMMANDS_QUEUE_ID);
+
+    let rt_clone = sim_runtime.clone();
+    let map_clone = actuator_map.clone();
+    let preset_clone = preset.clone();
+    let bus_serial_clone = legacy_bus_serial.clone();
+    let robot_id_clone = robot_id.clone();
+
+    normfs.subscribe(
+        &commands_queue_id,
+        Box::new(move |entries: &[(normfs::UintN, Bytes)]| {
+            for (_, data) in entries {
+                let pack = match commands::StationCommandsPack::decode(data.as_ref()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!(target: "st3215_compat_bridge::command_task",
+                            "decode StationCommandsPack: {}", e);
+                        continue;
+                    }
+                };
+                for cmd in &pack.commands {
+                    // Exactly mirror real driver's filter
+                    if cmd.r#type() != drivers::StationCommandType::StcSt3215Command {
+                        continue;
+                    }
+                    let st_cmd = match st3215::proto::Command::decode(cmd.body.clone()) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!(target: "st3215_compat_bridge::command_task",
+                                "decode ST3215 Command: {}", e);
+                            continue;
+                        }
+                    };
+                    // Filter by target_bus_serial: only pick commands for OUR sim bus
+                    if st_cmd.target_bus_serial != bus_serial_clone {
+                        continue;
+                    }
+                    // Translate to ActuationBatch
+                    let batch = match translate_command(&st_cmd, &map_clone, &preset_clone, &robot_id_clone) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::warn!(target: "st3215_compat_bridge::command_task",
+                                "translate failed: {:?}", e);
+                            continue;
+                        }
+                    };
+                    let rt = rt_clone.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = rt.send_actuation(batch).await {
+                            log::error!(target: "st3215_compat_bridge::command_task",
+                                "send_actuation failed: {:?}", e);
+                        }
+                    });
+                }
+            }
+            true  // keep subscription
+        }),
+    ).map_err(|e| BridgeError::NormfsSubscribe(format!("{:?}", e)))?;
+
+    Ok(())
+}
+
+fn translate_command(
+    cmd: &st3215::proto::Command,
+    actuator_map: &ActuatorMap,
+    preset: &RobotPreset,
+    robot_id: &str,
+) -> Result<ActuationBatch, BridgeError> {
+    let mut actuation_commands: Vec<ActuationCommand> = Vec::new();
+    let mut lane = QosLane::LossySetpoint;
+
+    // Handle write command (set goal position / torque enable)
+    if let Some(write) = &cmd.write {
+        let addr = write.addr as u16;
+        if addr == st3215_wire::RamRegister::GoalPosition as u16 {
+            // SetPosition commands
+            for motor_data in &write.data {
+                let motor_id = motor_data.motor_id as u8;
+                let entry = actuator_map.get_by_motor_id(motor_id)
+                    .ok_or_else(|| BridgeError::UnknownMotorId(motor_id))?;
+                let steps = u16::from_le_bytes([
+                    motor_data.data.get(0).copied().unwrap_or(0),
+                    motor_data.data.get(1).copied().unwrap_or(0),
+                ]);
+                let rad = st3215_wire::units::steps_to_rad(steps, entry.offset_steps);
+                actuation_commands.push(ActuationCommand {
+                    r#ref: Some(ActuatorRef {
+                        robot_id: robot_id.to_string(),
+                        actuator_id: entry.actuator_id.clone(),
+                    }),
+                    intent: Some(Intent::SetPosition(SetPosition {
+                        value: rad as f64,
+                        max_velocity: 0.0,
+                    })),
+                });
+            }
+        } else if addr == st3215_wire::RamRegister::TorqueEnable as u16 {
+            // EnableTorque / DisableTorque — discrete, reliable lane
+            lane = QosLane::ReliableControl;
+            for motor_data in &write.data {
+                let motor_id = motor_data.motor_id as u8;
+                let entry = actuator_map.get_by_motor_id(motor_id)
+                    .ok_or_else(|| BridgeError::UnknownMotorId(motor_id))?;
+                let enabled = motor_data.data.first().copied().unwrap_or(0) != 0;
+                actuation_commands.push(ActuationCommand {
+                    r#ref: Some(ActuatorRef {
+                        robot_id: robot_id.to_string(),
+                        actuator_id: entry.actuator_id.clone(),
+                    }),
+                    intent: Some(if enabled {
+                        Intent::EnableTorque(EnableTorque {})
+                    } else {
+                        Intent::DisableTorque(DisableTorque {})
+                    }),
+                });
+            }
+        }
+    }
+
+    // Handle reset — reliable lane
+    if cmd.reset.is_some() {
+        lane = QosLane::ReliableControl;
+        // Reset all known motors
+        for entry in actuator_map.by_motor_id.values() {
+            actuation_commands.push(ActuationCommand {
+                r#ref: Some(ActuatorRef {
+                    robot_id: robot_id.to_string(),
+                    actuator_id: entry.actuator_id.clone(),
+                }),
+                intent: Some(Intent::ResetActuator(sim_runtime::proto::ResetActuator {})),
+            });
+        }
+    }
+
+    // TODO: handle sync_write, reg_write similarly for MVP-2
+
+    Ok(ActuationBatch {
+        as_of: None,
+        commands: actuation_commands,
+        lane: lane as i32,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::preset_loader::{MotorEntry, RobotPreset};
+
+    fn test_preset() -> RobotPreset {
+        RobotPreset {
+            robot_id: "elrobot_follower".into(),
+            legacy_bus_serial: "sim://bus0".into(),
+            motors: vec![MotorEntry {
+                actuator_id: "rev_motor_01".into(),
+                motor_id: 1,
+                min_angle_steps: 0,
+                max_angle_steps: 4095,
+                offset_steps: 2048,
+                torque_limit: 500,
+                voltage_nominal_v: 12.0,
+            }],
+        }
+    }
+
+    #[test]
+    fn test_translate_setpos() {
+        // Build a fake st3215::proto::Command with write.addr = GoalPosition
+        // and one motor's data = rad_to_steps(0.5, 2048) as le_bytes
+        // Assert the translated ActuationBatch has one SetPosition intent
+        // with value ≈ 0.5.
+        // Elided for brevity; implementer fills from the structure above.
+    }
+
+    #[test]
+    fn test_translate_torque_enable_uses_reliable_lane() {
+        // write.addr = TorqueEnable, data = [1]
+        // Assert resulting batch.lane == QosLane::ReliableControl
+        // and intent is EnableTorque.
+    }
+
+    #[test]
+    fn test_translate_unknown_motor_id_errors() {
+        // motor_id = 99 (not in preset)
+        // Assert Err(BridgeError::UnknownMotorId(99))
+    }
+}
+```
+
+**Key verification**: the exact field names in `st3215::proto::Command` (`write`, `reset`, `sync_write`, `reg_write`, `target_bus_serial`, etc.) must be verified against `protobufs/drivers/st3215/st3215.proto` before the code is correct. Cross-reference with how `st3215/driver.rs:74-112` uses these fields.
+
+Commit: `git commit -m "st3215-compat-bridge: add command_task (subscribes global commands queue, filters by StcSt3215Command + target_bus_serial)"`.
+
+### Task 7.6: `state_task.rs`
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/state_task.rs
+// Subscribe sim_runtime.subscribe_snapshots(), pack each ActuatorState via
+// st3215_wire::pack_state_bytes, and write to st3215/inference queue.
+```
+
+Details: for each `WorldSnapshot`, iterate `snapshot.actuators`, look up motor_id via `actuator_map.get_motor_id_by_actuator(actuator.ref.actuator_id)`, look up `MotorEntry` for offset/limits, build `MotorSemanticState`, call `st3215_wire::pack_state_bytes`, then write to `st3215/inference` via NormFS (format matches `st3215::InferenceState::BusState`).
+
+Test: `test_state_task_packs_bytes` — drive a mock snapshot through the task, assert the NormFS write payload is 71 bytes and decodes via `unpack_state_bytes` back to the original position.
+
+Commit: `git commit -m "st3215-compat-bridge: add state_task (WorldSnapshot → st3215/inference bytes)"`.
+
+### Task 7.7: `health_task.rs`
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/health_task.rs
+use crate::errors::BridgeError;
+use normfs::NormFS;
+use sim_runtime::SimulationRuntime;
+use std::sync::Arc;
+
+pub async fn spawn_health_task(
+    normfs: Arc<NormFS>,
+    sim_runtime: Arc<SimulationRuntime>,
+    legacy_bus_serial: String,
+) -> Result<tokio::task::JoinHandle<()>, BridgeError> {
+    let mut health_rx = sim_runtime.subscribe_health();
+    let handle = tokio::spawn(async move {
+        while let Ok(health) = health_rx.recv().await {
+            if !health.backend_alive {
+                log::error!(target: "st3215_compat_bridge::health_task",
+                    "sim backend terminated: {:?}", health.termination);
+                // Write offline marker to st3215/meta
+                // TODO: write a synthetic BusInfo marking the bus offline
+                // (exact schema needs to match st3215::proto::BusInfo or equivalent)
+                break;
+            }
+        }
+    });
+    Ok(handle)
+}
+```
+
+Test: `test_health_task_writes_offline_marker_on_backend_termination` using MockBackend to inject `backend_alive=false`.
+
+Commit: `git commit -m "st3215-compat-bridge: add health_task (offline marker on backend termination)"`.
+
+### Task 7.8: `lib.rs` + startup + errors + final
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/lib.rs
+pub use station_iface::config::{Bridges, St3215CompatBridgeConfig};
+
+mod actuator_map;
+mod command_task;
+mod errors;
+mod health_task;
+mod preset_loader;
+mod state_task;
+
+pub use errors::BridgeError;
+
+use std::sync::Arc;
+use normfs::NormFS;
+use sim_runtime::SimulationRuntime;
+use station_iface::StationEngine;
+
+pub struct BridgeHandle {
+    // Task handles for graceful shutdown
+    _health_handle: tokio::task::JoinHandle<()>,
+}
+
+impl BridgeHandle {
+    pub async fn shutdown(&self) -> Result<(), BridgeError> {
+        // TODO: signal task cancellation via CancellationToken; for MVP they're
+        // tokio-spawned and will die on runtime drop.
+        Ok(())
+    }
+}
+
+pub async fn start_st3215_compat_bridge(
+    normfs: Arc<NormFS>,
+    _engine: Arc<dyn StationEngine>,
+    sim_runtime: Arc<SimulationRuntime>,
+    config: St3215CompatBridgeConfig,
+) -> Result<Arc<BridgeHandle>, BridgeError> {
+    config.validate().map_err(|e| BridgeError::InvalidConfig(e.into()))?;
+
+    let preset = Arc::new(preset_loader::load_preset(&config.preset_path)?);
+
+    // Verify the sim world contains the expected robot
+    let descriptor = sim_runtime.world_descriptor();
+    let robot = descriptor.robots.iter()
+        .find(|r| r.robot_id == config.robot_id)
+        .ok_or_else(|| BridgeError::RobotNotInWorld(config.robot_id.clone()))?;
+
+    // Verify every preset actuator exists in the world's robot
+    for m in &preset.motors {
+        if !robot.actuators.iter().any(|a| a.actuator_id == m.actuator_id) {
+            return Err(BridgeError::ActuatorNotInWorld(m.actuator_id.clone()));
+        }
+    }
+
+    let actuator_map = Arc::new(actuator_map::ActuatorMap::from_preset(&preset));
+
+    command_task::spawn_command_task(
+        normfs.clone(),
+        sim_runtime.clone(),
+        actuator_map.clone(),
+        preset.clone(),
+        config.robot_id.clone(),
+        config.legacy_bus_serial.clone(),
+    ).await?;
+
+    // state_task and health_task similar...
+
+    let health_handle = health_task::spawn_health_task(
+        normfs.clone(),
+        sim_runtime.clone(),
+        config.legacy_bus_serial.clone(),
+    ).await?;
+
+    Ok(Arc::new(BridgeHandle { _health_handle: health_handle }))
+}
+```
+
+```rust
+// software/sim-bridges/st3215-compat-bridge/src/errors.rs
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum BridgeError {
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
+
+    #[error("preset load: {0}")]
+    PresetLoad(String),
+
+    #[error("robot '{0}' not in world")]
+    RobotNotInWorld(String),
+
+    #[error("actuator '{0}' not in world")]
+    ActuatorNotInWorld(String),
+
+    #[error("unknown motor_id {0}")]
+    UnknownMotorId(u8),
+
+    #[error("normfs subscribe: {0}")]
+    NormfsSubscribe(String),
+
+    #[error("sim runtime error: {0}")]
+    SimRuntime(#[from] sim_runtime::SimRuntimeError),
+}
+```
+
+Commit: `git commit -m "st3215-compat-bridge: add lib.rs entry + startup validation + errors"`.
+
+### Chunk 7 exit checklist
+
+- [ ] `cargo build -p st3215-compat-bridge` green
+- [ ] `cargo test -p st3215-compat-bridge` ≥ 10 tests pass
+- [ ] `grep` for `sim://` prefix enforcement is present in test
+- [ ] 8 commits
+
+---
+
+## Chunk 8: Station integration + config + E2E + smoke test
+
+**Purpose:** The final integration. Wire Station's `main.rs` to start `SimulationRuntime` + `st3215-compat-bridge` at startup, add the three scenario YAML files, Makefile targets, architecture invariant check, cross-crate integration tests (including the ★★★ `test_legacy_station_py_commands_flow_through_bridge`), sim-server README with smoke-test checklist, and a final full-workspace build + manual smoke test.
+
+**Exit criteria:**
+- `cargo build -p station` green with new deps
+- `cargo test --workspace` all green
+- `make check-arch-invariants` passes
+- ★★★ `test_legacy_station_py_commands_flow_through_bridge` passes
+- `test_shadow_mode_target_bus_serial_routing` passes
+- Manual smoke test scenario A passes (Station + web UI + motor 8 drag moves gripper fingers)
+- Final "MVP-1 complete" commit
+- 12 commits
+
+### Task 8.1: `station-iface/src/config.rs` — `Config::validate()`
+
+Add to existing `Config` struct:
+
+```rust
+// In software/station/shared/station-iface/src/config.rs
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Config {
+    pub drivers: Drivers,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference: Option<Vec<Inference>>,
+    #[serde(rename = "cloud-offload", skip_serializing_if = "Option::is_none")]
+    pub cloud_offload: Option<CloudOffloadConfig>,
+
+    // ✨ new (added in Chunk 3 Task 3.2)
+    #[serde(rename = "sim-runtime", default, skip_serializing_if = "Option::is_none")]
+    pub sim_runtime: Option<SimRuntimeConfig>,
+
+    #[serde(default, skip_serializing_if = "Bridges::is_empty")]
+    pub bridges: Bridges,
+}
+
+impl Config {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(sim) = &self.sim_runtime {
+            sim.validate().map_err(String::from)?;
+        }
+        if let Some(bridge) = &self.bridges.st3215_compat {
+            if bridge.enabled {
+                let sim_enabled = self.sim_runtime.as_ref().map_or(false, |s| s.enabled);
+                if !sim_enabled {
+                    return Err("bridges.st3215_compat requires sim-runtime to be enabled".into());
+                }
+                bridge.validate().map_err(String::from)?;
+            }
+        }
+        // NOTE: no mutual exclusion rules between drivers.st3215 and bridges.st3215_compat.
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod config_validate_tests {
+    use super::*;
+    #[test]
+    fn test_bridge_requires_sim_runtime() { /* ... */ }
+    #[test]
+    fn test_real_and_sim_can_coexist() {
+        // Assert Config with st3215 enabled + bridges.st3215_compat enabled + sim-runtime enabled
+        // passes validate() — this is the shadow mode assertion.
+    }
+}
+```
+
+Commit: `git commit -m "station-iface: add Config::validate() with no mutual exclusion"`.
+
+### Task 8.2: `station-iface/src/lib.rs` re-exports
+
+```rust
+pub use config::{
+    Bridges, LogCapture, SimMode, SimRuntimeConfig, St3215CompatBridgeConfig,
+};
+```
+
+Commit: `git commit -m "station-iface: re-export new config types"`.
+
+### Task 8.3: `station/bin/station/Cargo.toml` deps
+
+```toml
+# In software/station/bin/station/Cargo.toml [dependencies]
+sim-runtime = { path = "../../../sim-runtime" }
+st3215-compat-bridge = { path = "../../../sim-bridges/st3215-compat-bridge" }
+```
+
+Verify build:
+```bash
+cargo build -p station 2>&1 | tail -10
+```
+
+Commit: `git commit -m "station: add sim-runtime + st3215-compat-bridge deps"`.
+
+### Task 8.4: `station/bin/station/src/main.rs` insertions
+
+This is the ~80-line delta. Follow the structure from Chunk 1's `§6.4 Station 启动 / 关闭顺序` exactly. Key points:
+- `Station` struct gains `pub sim_runtime: Option<Arc<SimulationRuntime>>` and `pub bridges: Vec<Arc<BridgeHandle>>` fields
+- `Station::new()` initializes them to `None` / `vec![]`
+- In `main()`: insert `station.config.validate()?;` after `Station::new`
+- After `start_commands_queue` and the existing `inference::Inference::start` (`main.rs:348`): start SimulationRuntime
+- After `start_drivers`: start bridges
+- In shutdown: bridges → sim_runtime → station.shutdown() (existing)
+
+Refer to the Chunk 1 introduction (§6.4 既有代码小注) for the exact existing-code context.
+
+Verify full workspace build:
+```bash
+cargo build --workspace 2>&1 | tail -30
+```
+
+Commit: `git commit -m "station: wire SimulationRuntime + st3215-compat-bridge into main.rs"`.
+
+### Task 8.5: Create the three scenario yaml files
+
+**`software/station/bin/station/station-sim.yaml`** (scenario A — internal sim only):
+
+```yaml
+sim-runtime:
+  enabled: true
+  mode: internal
+  launcher:
+    - python3
+    - -m
+    - norma_sim
+    - --manifest
+    - hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+    - --physics-hz
+    - "500"
+    - --publish-hz
+    - "100"
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: elrobot_follower
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+    legacy-bus-serial: "sim://bus0"
+
+drivers:
+  st3215:
+    enabled: false
+  system-info: true
+  usb-video:
+    enabled: false
+
+inference:
+  - queue-id: inference/normvla
+    shm: /dev/shm/normvla
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://bus0"
+    update-interval: 100ms
+```
+
+**`station-sim-external.yaml`** (scenario B):
+
+```yaml
+sim-runtime:
+  enabled: true
+  mode: external
+  socket-path: /tmp/norma-sim-dev.sock
+  startup-timeout-ms: 5000
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: elrobot_follower
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+    legacy-bus-serial: "sim://bus0"
+
+drivers:
+  st3215:
+    enabled: false
+  system-info: true
+
+inference:
+  - queue-id: inference/normvla
+    shm: /dev/shm/normvla
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://bus0"
+    update-interval: 100ms
+```
+
+**`station-shadow.yaml`** (scenario C):
+
+```yaml
+sim-runtime:
+  enabled: true
+  mode: internal
+  launcher:
+    - python3
+    - -m
+    - norma_sim
+    - --manifest
+    - hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+    - --physics-hz
+    - "500"
+    - --publish-hz
+    - "100"
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: elrobot_follower
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+    legacy-bus-serial: "sim://elrobot-shadow"
+
+drivers:
+  st3215:
+    enabled: true
+    current-threshold: 100
+    deadband: 20
+  usb-video:
+    enabled: true
+  system-info: true
+
+inference:
+  - queue-id: inference/normvla-real
+    shm: /dev/shm/normvla-real
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "ST3215-BUS-A1B2C3"   # placeholder; fill with actual EEPROM serial
+    update-interval: 100ms
+  - queue-id: inference/normvla-sim
+    shm: /dev/shm/normvla-sim
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://elrobot-shadow"
+    update-interval: 100ms
+```
+
+Commit: `git commit -m "station: add sim scenario yamls (sim / external / shadow)"`.
+
+### Task 8.6: Makefile targets + architecture invariant check script
+
+Append to `Makefile`:
+
+```makefile
+# —— Simulation targets ——
+
+.PHONY: sim-install
+sim-install:
+	pip install -e software/sim-server/
+
+.PHONY: sim-run
+sim-run: sim-install
+	./target/debug/station -c software/station/bin/station/station-sim.yaml
+
+.PHONY: sim-standalone
+sim-standalone: sim-install
+	python -m norma_sim \
+	  --manifest hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml \
+	  --socket /tmp/norma-sim-dev.sock \
+	  --physics-hz 500 \
+	  --publish-hz 100
+
+.PHONY: sim-shadow
+sim-shadow:
+	./target/debug/station -c software/station/bin/station/station-shadow.yaml
+
+.PHONY: sim-test
+sim-test: check-arch-invariants
+	cargo test -p st3215-wire
+	cargo test -p sim-runtime
+	cargo test -p st3215-compat-bridge
+	cd software/sim-server && pytest
+
+.PHONY: check-arch-invariants
+check-arch-invariants:
+	@echo "Checking architecture invariants..."
+	@if grep -r -i "st3215" software/sim-runtime/src/ > /dev/null; then \
+	  echo "FAIL: sim-runtime has ST3215 reference"; exit 1; fi
+	@if grep -r -i "st3215" software/sim-server/norma_sim/ > /dev/null; then \
+	  echo "FAIL: norma_sim has ST3215 reference"; exit 1; fi
+	@if grep -r -E "tokio|normfs|station_iface|StationEngine" software/drivers/st3215-wire/src/ > /dev/null; then \
+	  echo "FAIL: st3215-wire has forbidden I/O dependency"; exit 1; fi
+	@if grep -q "^pub trait WorldBackend" software/sim-runtime/src/backend/mod.rs; then \
+	  echo "FAIL: WorldBackend trait must be pub(crate), not pub"; exit 1; fi
+	@echo "All architecture invariants hold ✓"
+```
+
+Verify: `make check-arch-invariants` (should pass if all previous chunks are correct).
+
+Commit: `git commit -m "build: add sim Makefile targets + check-arch-invariants"`.
+
+### Task 8.7: `.gitignore` updates
+
+Append to `.gitignore`:
+
+```
+# Simulation runtime state
+/tmp/norma-sim*
+sim-backend.log
+sim-runtime.log
+station_data/sim-*.log
+```
+
+Commit: `git commit -m "gitignore: ignore sim runtime artifacts"`.
+
+### Task 8.8: ★★★ `test_legacy_station_py_commands_flow_through_bridge`
+
+Create `software/station/bin/station/tests/sim_integration.rs` (or put in an existing test file):
+
+```rust
+//! End-to-end integration test proving that existing station_py command
+//! clients can drive the sim bridge WITHOUT any client-side modification.
+//! This is codex's explicit requirement for the compat story — see
+//! spec §18.1 B1 and the cross-crate test rationale in Chunk 2 of the plan.
+
+use normfs::NormFS;
+// ... imports ...
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_legacy_station_py_commands_flow_through_bridge() {
+    // 1. Build a tempdir-backed NormFS + a concrete StationEngine impl
+    //    (or an in-memory one for tests)
+    // 2. Build a MockBackend for sim-runtime with a canned WorldDescriptor
+    //    containing robot_id="elrobot_follower" + rev_motor_01..08 actuators
+    // 3. Call SimulationRuntime::start_with_backend (test-only constructor)
+    // 4. Call start_st3215_compat_bridge with a test preset
+    // 5. Construct a StationCommandsPack with one command:
+    //      type = StcSt3215Command,
+    //      body = st3215::proto::Command {
+    //        target_bus_serial: "sim://bus0",
+    //        write: Some(WriteCommand {
+    //          addr: RamRegister::GoalPosition as u16,
+    //          data: vec![MotorData { motor_id: 1, data: rad_to_steps(0.5, 2048).to_le_bytes() }],
+    //          ..
+    //        }),
+    //        ..
+    //      }
+    // 6. Write the pack to the global "commands" queue via NormFS
+    // 7. Observe the MockBackend's outbound channel (via outbound_observer)
+    // 8. Assert that within 1s, an Envelope arrived with an ActuationBatch
+    //    containing one ActuationCommand with:
+    //      - ref.robot_id = "elrobot_follower"
+    //      - ref.actuator_id = "rev_motor_01"
+    //      - intent = SetPosition { value ≈ 0.5, max_velocity: 0.0 }
+    //      - lane = QOS_LOSSY_SETPOINT
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_shadow_mode_target_bus_serial_routing() {
+    // Same harness, inject TWO commands:
+    //   - target_bus_serial = "sim://elrobot-shadow" → should reach MockBackend
+    //   - target_bus_serial = "ST3215-BUS-A1B2C3" → should NOT reach MockBackend
+    // Assert the MockBackend observer received exactly one actuation.
+}
+```
+
+Commit: `git commit -m "station: add cross-crate E2E test for legacy station_py compat"`.
+
+### Task 8.9: `sim-server/README.md` with smoke-test checklist
+
+Replace the stub README from Chunk 5 with the full content including the manual smoke-test checklist from spec §附录 A.
+
+Commit: `git commit -m "sim-server: write README with manual smoke-test checklist"`.
+
+### Task 8.10: Full workspace build + test
+
+```bash
+cargo build --workspace
+cargo test --workspace
+cd software/sim-server && pytest
+make check-arch-invariants
+```
+
+All must be green. If anything fails, investigate and fix before proceeding to Task 8.11. No commit in this task.
+
+### Task 8.11: Manual smoke test (scenario A minimum)
+
+Follow the checklist in `sim-server/README.md` scenario A:
+
+1. `make sim-install` — succeeds
+2. `make protobuf` — succeeds
+3. `make regen-mjcf` — succeeds (or verify already-generated MJCF is current)
+4. `cargo build -p station` — succeeds
+5. `./target/debug/station -c software/station/bin/station/station-sim.yaml` — launches
+6. stderr shows `sim-runtime started session_id=...`
+7. stderr shows `handshake complete protocol_version=1 world_name=elrobot_follower_empty`
+8. Open browser to `http://localhost:8889`
+9. ElRobot 3D model loads
+10. Drag motor 1 slider → Joint_01 rotates
+11. **Drag motor 8 slider → Gripper_Jaw_01 and Gripper_Jaw_02 open/close** ★ (this is the P0 demo)
+12. Ctrl+C — clean shutdown
+13. `ls /tmp/norma-sim*` — empty
+
+If any step fails, debug and fix the relevant chunk. No commit in this task (manual verification only).
+
+### Task 8.12: Final "MVP-1 complete" commit
+
+```bash
+git commit --allow-empty -m "$(cat <<'EOF'
+sim: MVP-1 simulation integration complete
+
+Implements the full v2 simulation integration design across 8 chunks:
+  Chunk 1: Proto schema + world.yaml manifest + gen.py (MJCF derivation)
+  Chunk 2: st3215-wire pure-protocol crate (migrated from st3215)
+  Chunk 3: sim-runtime foundation (config, errors, clock, backend trait,
+           transport, framing, codec, handshake, mock backend)
+  Chunk 4: sim-runtime subsystem (SimulationRuntime public API,
+           ChildProcess + ExternalSocket backends, snapshot broker,
+           actuation sender with QoS lanes, health publisher with
+           /sim/descriptor persistence, supervisor)
+  Chunk 5: norma_sim Python world + scheduler (capabilities module,
+           manifest loader with source_hash verification, model wrapper,
+           actuation applier, snapshot builder, real-time scheduler)
+  Chunk 6: norma_sim Python ipc + CLI + diagnostic tools (framing,
+           codec, session, server, CLI entry, inspect/probe/send scripts)
+  Chunk 7: st3215-compat-bridge (subscribes global commands queue,
+           filters by StcSt3215Command + target_bus_serial, translates to
+           generic ActuationBatch; state_task packs bytes via st3215-wire;
+           health_task writes offline marker on backend termination;
+           sim:// prefix enforcement)
+  Chunk 8: Station integration + config validation + scenario yamls +
+           Makefile targets + architecture invariant check script +
+           cross-crate E2E tests + manual smoke test
+
+Architecture invariants (all CI-enforced):
+  - grep "st3215" software/sim-runtime/src/ = empty
+  - grep "st3215" software/sim-server/norma_sim/ = empty
+  - grep "tokio|normfs|station_iface|StationEngine" software/drivers/st3215-wire/src/ = empty
+  - WorldBackend trait is pub(crate) (compile-time verified)
+  - Config::validate() has zero mutual exclusion rules
+  - cargo tree -p sim-runtime does not contain st3215-wire
+
+Manual smoke test scenario A passed: station -c station-sim.yaml boots,
+web UI shows ElRobot follower, dragging motor 8 slider moves gripper
+fingers via MJCF <equality> polycoef constraints.
+
+See docs/superpowers/specs/2026-04-10-simulation-integration-design.md
+for the v2 spec this plan implements, and
+docs/superpowers/plans/2026-04-10-simulation-integration-mvp1.md for
+the 8-chunk implementation plan.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+### Chunk 8 exit checklist
+
+- [ ] `cargo test --workspace` all green
+- [ ] `cd software/sim-server && pytest` all green
+- [ ] `make check-arch-invariants` passes
+- [ ] ★★★ `test_legacy_station_py_commands_flow_through_bridge` passes
+- [ ] Manual smoke test scenario A passed (★ gripper mimic works in web UI)
+- [ ] 12 commits (Tasks 8.1–8.12)
+- [ ] Final "MVP-1 complete" commit made
 
 ---
 
