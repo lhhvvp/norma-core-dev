@@ -185,20 +185,50 @@ def build_mjcf(manifest: dict[str, Any], urdf_path: Path, manifest_dir: Path) ->
     option.set("gravity", " ".join(str(g) for g in scene["gravity"]))
     option.set("integrator", scene["integrator"])
 
-    # Phase 2c: equality constraints (replaces URDF <mimic>, which MuJoCo drops)
+    # Phase 2c: mimic-joint coupling via <tendon><fixed> + <equality><tendon>.
+    # (deviation from plan §1.4 Step 1c: the plan used <equality><joint
+    # polycoef="..."/>, which MuJoCo's constraint solver does not enforce
+    # reliably when the two joints are of different types — e.g. hinge
+    # primary + prismatic mimic, as in this gripper — because the Jacobian
+    # entries span disparate units (rad vs m). Tendon-based equality is
+    # MuJoCo's canonical way to implement URDF <mimic> because a <fixed>
+    # tendon reduces the problem to a single scalar length that the
+    # equality solver can enforce strongly.)
+    #
+    # For each mimic j1 = multiplier * primary, we build:
+    #   <tendon><fixed name="mimic_<j1>">
+    #     <joint joint="<j1>" coef="1"/>
+    #     <joint joint="<primary>" coef="-multiplier"/>
+    #   </fixed></tendon>
+    #   <equality><tendon tendon1="mimic_<j1>" solref="0.002 1"
+    #                     solimp="0.99 0.999 0.0001"/></equality>
+    # The tendon length = qpos[j1] - multiplier*qpos[primary]; constraining
+    # it to 0 enforces qpos[j1] = multiplier * qpos[primary].
     equality = root.find("equality")
     if equality is None:
         equality = ET.SubElement(root, "equality")
+    tendon = root.find("tendon")
+    if tendon is None:
+        tendon = ET.SubElement(root, "tendon")
     for robot in manifest["robots"]:
         for act in robot["actuators"]:
             if act["capability"]["kind"] != "GRIPPER_PARALLEL":
                 continue
             primary_joint = act["urdf_joint"]
             for mimic in act["gripper"]["mimic_joints"]:
-                ET.SubElement(equality, "joint", {
-                    "joint1": mimic["joint"],
-                    "joint2": primary_joint,
-                    "polycoef": f"0 {mimic['multiplier']} 0 0 0",
+                tendon_name = f"mimic_{mimic['joint']}"
+                fixed = ET.SubElement(tendon, "fixed", {"name": tendon_name})
+                ET.SubElement(fixed, "joint", {
+                    "joint": mimic["joint"], "coef": "1",
+                })
+                ET.SubElement(fixed, "joint", {
+                    "joint": primary_joint,
+                    "coef": str(-float(mimic["multiplier"])),
+                })
+                ET.SubElement(equality, "tendon", {
+                    "tendon1": tendon_name,
+                    "solref": "0.002 1",
+                    "solimp": "0.99 0.999 0.0001 0.5 2",
                 })
 
     # Phase 2d: actuators
@@ -384,11 +414,27 @@ def run_self_check(manifest: dict[str, Any], mjcf_path: Path) -> None:
         p.get("joint") for p in mjcf_root.findall("./actuator/position")
     }
 
-    # Collect equality joint1/joint2 references
-    mjcf_equality_joints = set()
-    for eq in mjcf_root.findall("./equality/joint"):
-        mjcf_equality_joints.add(eq.get("joint1"))
-        mjcf_equality_joints.add(eq.get("joint2"))
+    # Mimic coupling is implemented via <tendon><fixed> + <equality><tendon>
+    # (see build_mjcf Phase 2c). Collect tendon-based mimic mappings:
+    # mimic_tendons[tendon_name] = {joint_name: coef}
+    mimic_tendons: dict[str, dict[str, float]] = {}
+    for fixed in mjcf_root.findall("./tendon/fixed"):
+        name = fixed.get("name", "")
+        if not name.startswith("mimic_"):
+            continue
+        coefs: dict[str, float] = {}
+        for jn in fixed.findall("joint"):
+            jname = jn.get("joint", "")
+            if not jname:
+                continue
+            coefs[jname] = float(jn.get("coef", "0"))
+        mimic_tendons[name] = coefs
+
+    # Equality tendons referenced by <equality><tendon tendon1="..."/>
+    mjcf_equality_tendons = {
+        eq.get("tendon1") for eq in mjcf_root.findall("./equality/tendon")
+        if eq.get("tendon1")
+    }
 
     # Walk manifest and verify everything referenced exists in MJCF
     for robot in manifest["robots"]:
@@ -408,33 +454,39 @@ def run_self_check(manifest: dict[str, Any], mjcf_path: Path) -> None:
                     f"references it"
                 )
 
-            # For gripper, every mimic joint must be in <equality>
+            # For gripper, every mimic joint must be coupled via a mimic
+            # tendon that is referenced by an <equality><tendon>.
             cap = act["capability"]
             if cap["kind"] == "GRIPPER_PARALLEL":
+                primary = act["urdf_joint"]
                 for mimic in act["gripper"]["mimic_joints"]:
-                    if mimic["joint"] not in mjcf_equality_joints:
+                    mimic_joint = mimic["joint"]
+                    tendon_name = f"mimic_{mimic_joint}"
+                    if tendon_name not in mimic_tendons:
                         raise ValueError(
-                            f"gripper mimic joint '{mimic['joint']}' missing "
-                            f"from MJCF <equality>"
+                            f"gripper mimic joint '{mimic_joint}' missing "
+                            f"<tendon><fixed name='{tendon_name}'> in MJCF"
                         )
-                    # Verify polycoef matches exactly
-                    expected_c1 = mimic["multiplier"]
-                    found = False
-                    for eq in mjcf_root.findall("./equality/joint"):
-                        if eq.get("joint1") == mimic["joint"] and eq.get("joint2") == act["urdf_joint"]:
-                            coefs = eq.get("polycoef", "").split()
-                            if len(coefs) < 2 or abs(float(coefs[1]) - expected_c1) > 1e-9:
-                                raise ValueError(
-                                    f"polycoef c1 mismatch for {mimic['joint']}: "
-                                    f"MJCF has {coefs[1] if len(coefs) >= 2 else 'missing'}, "
-                                    f"manifest says {expected_c1}"
-                                )
-                            found = True
-                            break
-                    if not found:
+                    if tendon_name not in mjcf_equality_tendons:
                         raise ValueError(
-                            f"could not find equality entry for mimic joint "
-                            f"{mimic['joint']} → {act['urdf_joint']}"
+                            f"mimic tendon '{tendon_name}' not referenced by "
+                            f"<equality><tendon tendon1=...> in MJCF"
+                        )
+                    coefs = mimic_tendons[tendon_name]
+                    # The fixed tendon encodes: length = 1*mimic + (-k)*primary
+                    # so constraining length=0 gives mimic = k*primary.
+                    expected_primary_coef = -float(mimic["multiplier"])
+                    if mimic_joint not in coefs or abs(coefs[mimic_joint] - 1.0) > 1e-9:
+                        raise ValueError(
+                            f"mimic tendon '{tendon_name}' must have joint "
+                            f"'{mimic_joint}' with coef=1, got {coefs.get(mimic_joint)}"
+                        )
+                    if primary not in coefs or abs(coefs[primary] - expected_primary_coef) > 1e-9:
+                        raise ValueError(
+                            f"mimic tendon '{tendon_name}' primary coef mismatch: "
+                            f"expected {expected_primary_coef} "
+                            f"(=-multiplier {mimic['multiplier']}), "
+                            f"got {coefs.get(primary)}"
                         )
 
 

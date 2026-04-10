@@ -289,9 +289,19 @@
 
   <option timestep="0.002" iterations="50" solver="Newton" gravity="0 0 -9.81" integrator="RK4"/>
   <equality>
-    <joint joint1="rev_motor_08_1" joint2="rev_motor_08" polycoef="0 -0.0115 0 0 0"/>
-    <joint joint1="rev_motor_08_2" joint2="rev_motor_08" polycoef="0 0.0115 0 0 0"/>
+    <tendon tendon1="mimic_rev_motor_08_1" solref="0.002 1" solimp="0.99 0.999 0.0001 0.5 2"/>
+    <tendon tendon1="mimic_rev_motor_08_2" solref="0.002 1" solimp="0.99 0.999 0.0001 0.5 2"/>
   </equality>
+  <tendon>
+    <fixed name="mimic_rev_motor_08_1">
+      <joint joint="rev_motor_08_1" coef="1"/>
+      <joint joint="rev_motor_08" coef="0.0115"/>
+    </fixed>
+    <fixed name="mimic_rev_motor_08_2">
+      <joint joint="rev_motor_08_2" coef="1"/>
+      <joint joint="rev_motor_08" coef="-0.0115"/>
+    </fixed>
+  </tendon>
   <actuator>
     <position name="act_motor_01" joint="rev_motor_01" kp="15.0" kv="0.5" ctrlrange="-1.5509 1.5509" forcerange="-2.94 2.94"/>
     <position name="act_motor_02" joint="rev_motor_02" kp="15.0" kv="0.5" ctrlrange="-1.6122 1.6122" forcerange="-2.94 2.94"/>
