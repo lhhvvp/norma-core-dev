@@ -41,3 +41,8 @@ clean:
 	mkdir target
 
 all: build-all
+
+# Regenerate MJCF from world.yaml manifest + URDF. Run after editing either.
+.PHONY: regen-mjcf
+regen-mjcf:
+	python3 hardware/elrobot/simulation/worlds/gen.py
