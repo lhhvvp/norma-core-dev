@@ -353,8 +353,89 @@ def write_mjcf(path: Path, mjcf_elem: ET.Element, source_hash: str) -> None:
 
 
 def run_self_check(manifest: dict[str, Any], mjcf_path: Path) -> None:
-    """Placeholder; Task 1.5 fleshes this out. Task 1.3 skeleton is a no-op."""
-    pass
+    """Verify manifest and generated MJCF are consistent.
+
+    Raises ValueError with a clear message on any mismatch. This runs
+    after write_mjcf so self-check can inspect the serialized file.
+    """
+    mjcf_tree = ET.parse(mjcf_path)
+    mjcf_root = mjcf_tree.getroot()
+
+    # Check compiler.angle="radian"
+    compiler = mjcf_root.find("compiler")
+    if compiler is None or compiler.get("angle") != "radian":
+        raise ValueError("MJCF compiler angle is not 'radian'")
+
+    # Check timestep match
+    option = mjcf_root.find("option")
+    if option is None or float(option.get("timestep", 0)) != manifest["scene"]["timestep"]:
+        raise ValueError(
+            f"MJCF option.timestep {option.get('timestep') if option is not None else None} "
+            f"does not match manifest scene.timestep {manifest['scene']['timestep']}"
+        )
+
+    # Collect actuator names in MJCF <actuator> section
+    mjcf_actuators = {
+        p.get("name") for p in mjcf_root.findall("./actuator/position")
+    }
+
+    # Collect joint names referenced in MJCF <actuator> (via joint="...")
+    mjcf_actuator_joints = {
+        p.get("joint") for p in mjcf_root.findall("./actuator/position")
+    }
+
+    # Collect equality joint1/joint2 references
+    mjcf_equality_joints = set()
+    for eq in mjcf_root.findall("./equality/joint"):
+        mjcf_equality_joints.add(eq.get("joint1"))
+        mjcf_equality_joints.add(eq.get("joint2"))
+
+    # Walk manifest and verify everything referenced exists in MJCF
+    for robot in manifest["robots"]:
+        for act in robot["actuators"]:
+            # Every mjcf_actuator name referenced must exist
+            if act["mjcf_actuator"] not in mjcf_actuators:
+                raise ValueError(
+                    f"manifest actuator '{act['actuator_id']}' references "
+                    f"mjcf_actuator='{act['mjcf_actuator']}' which does not exist "
+                    f"in MJCF. Known names: {sorted(mjcf_actuators)}"
+                )
+            # Every urdf_joint must be reachable via MJCF's actuator.joint
+            if act["urdf_joint"] not in mjcf_actuator_joints:
+                raise ValueError(
+                    f"manifest actuator '{act['actuator_id']}' has urdf_joint="
+                    f"'{act['urdf_joint']}' but no MJCF <position joint='...'> "
+                    f"references it"
+                )
+
+            # For gripper, every mimic joint must be in <equality>
+            cap = act["capability"]
+            if cap["kind"] == "GRIPPER_PARALLEL":
+                for mimic in act["gripper"]["mimic_joints"]:
+                    if mimic["joint"] not in mjcf_equality_joints:
+                        raise ValueError(
+                            f"gripper mimic joint '{mimic['joint']}' missing "
+                            f"from MJCF <equality>"
+                        )
+                    # Verify polycoef matches exactly
+                    expected_c1 = mimic["multiplier"]
+                    found = False
+                    for eq in mjcf_root.findall("./equality/joint"):
+                        if eq.get("joint1") == mimic["joint"] and eq.get("joint2") == act["urdf_joint"]:
+                            coefs = eq.get("polycoef", "").split()
+                            if len(coefs) < 2 or abs(float(coefs[1]) - expected_c1) > 1e-9:
+                                raise ValueError(
+                                    f"polycoef c1 mismatch for {mimic['joint']}: "
+                                    f"MJCF has {coefs[1] if len(coefs) >= 2 else 'missing'}, "
+                                    f"manifest says {expected_c1}"
+                                )
+                            found = True
+                            break
+                    if not found:
+                        raise ValueError(
+                            f"could not find equality entry for mimic joint "
+                            f"{mimic['joint']} → {act['urdf_joint']}"
+                        )
 
 
 if __name__ == "__main__":
