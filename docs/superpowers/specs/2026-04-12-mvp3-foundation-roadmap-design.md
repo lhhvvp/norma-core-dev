@@ -83,11 +83,11 @@ remain open.
 | **VERSION bump** | 0.1.0 → 0.2.0 (minor) | 0.2.0 → 0.2.1 (patch) | 0.2.1 → 0.2.2 (patch) — see Open Decision U1 |
 | **Atomic commit** | 1 | 1 | 1 (see Open Decision U2) |
 | **Test count delta** | 0 | +1-2 (scene loadable smoke) | 0 (sim-server -13, engine-tier +13) |
-| **Post-chunk `make sim-test`** | 90 passed, 1 skipped | 91-92 passed, 1 skipped | 91-92 passed, 1 skipped |
+| **Post-chunk `make sim-test`** | 90 passed, 1 skipped | 91 passed, 1 skipped | 91 passed, 1 skipped |
 | **Estimated plan length** | 1000-1400 lines | 300-500 lines | 700-1000 lines |
 | **Prerequisite** | Chunk 0 (`6ef605b`) | Chunk 1 landed | Chunk 1 landed (hard); Chunk 2 landed (soft) |
 
-**Total MVP-3 Foundation**: 3 atomic commits, ~50-70 file ops, ~2000-3000
+**Total MVP-3 Foundation**: 3 atomic commits, ~40-50 file ops, ~2000-3000
 plan lines combined. Smaller than MVP-2 (4216 lines / 7 chunks) because the
 work is purely organizational — no new code logic.
 
@@ -102,8 +102,8 @@ Move `hardware/elrobot/simulation/assets/` (19 STL meshes) and
 `hardware/elrobot/simulation/mujoco/elrobot_follower/`. Simplify the MJCF's
 `meshdir="../../assets"` to `meshdir="assets"`. Update every dependent path
 (test fixtures, sim-server fixtures, README references, conftest paths).
-Bump VERSION to 0.2.0 (minor — structural package layout change). Tendons
-are: this fulfills Chunk 0's "future chunk will move assets" promise.
+Bump VERSION to 0.2.0 (minor — structural package layout change). This
+fulfills Chunk 0's "future chunk will move assets" promise.
 
 ### Prerequisites
 
@@ -163,7 +163,8 @@ Phase A — see Section 7 (α) lesson):
    (no PYTHONPATH) → 4 passed + 1 skipped (mjx)
 4. `pytest hardware/elrobot/simulation/mujoco/elrobot_follower/tests/test_urdf_parity.py -v`
    → 2 **PASSED** (counted explicitly via grep, not just "no failures" — see
-   Risk #6)
+   Section 9 Risk #6 "test_urdf_parity skip-vs-fail trap" and the local
+   Chunk-1 risk #4 below)
 5. **Self-containment**: `cp -r hardware/elrobot/simulation/mujoco/elrobot_follower /tmp/elrobot-test && cd /tmp/elrobot-test && python3 -m pytest tests/ -v`
    → 4 passed + 1 skipped (mjx)
 6. Phase G.8 grep: `grep -rn 'hardware/elrobot/simulation/assets\|hardware/elrobot/simulation/elrobot_follower\.urdf' software/ hardware/ Makefile docs/`
@@ -222,8 +223,12 @@ wrapper" deferral.
 
 ### Prerequisites
 
-- Chunk 1 (`A2 — Assets+URDF Move`) landed
-- Package is self-contained at this point (assets + URDF in package)
+- Chunk 1 (`A2 — Assets+URDF Move`) landed (**soft prerequisite** — Chunk 2
+  *content* doesn't depend on Chunk 1, but the cp -r self-containment success
+  criterion #5 below requires assets to already be in the package; running
+  Chunk 2 before Chunk 1 would mean re-running visual validation after Chunk 1)
+- Package is self-contained at this point (assets + URDF in package, courtesy
+  of Chunk 1)
 - `make sim-test` baseline 90 passed, 1 skipped
 
 ### File operations
@@ -332,7 +337,14 @@ complete, fresh-checkout-runnable robot package.
 
 ### Prerequisites
 
-- Chunk 2 (`A3 — Scene Wrapper`) landed
+- Chunk 1 (`A2 — Assets+URDF Move`) landed (**hard prerequisite** — success
+  criterion #5 below requires assets+URDF inside the package for the cp -r /tmp
+  self-containment test to pass; without Chunk 1, that test fails)
+- Chunk 2 (`A3 — Scene Wrapper`) landed (**soft prerequisite** — Chunk 3
+  *content* doesn't depend on scene.xml, but the cp -r self-containment count
+  in success criterion #5 includes Chunk 2's scene loadable smoke test;
+  reverse-ordering produces an intermediate state where the package looks
+  incomplete)
 - `make sim-test` baseline 91 passed, 1 skipped
 - Package is self-contained (assets + URDF + scene.xml all in place)
 
@@ -400,15 +412,17 @@ sim-server tests.
    already in baseline)
 5. **Full self-containment**:
    `cp -r mujoco/elrobot_follower /tmp/elrobot-test && cd /tmp/elrobot-test && pytest tests/ -v`
-   → **17 passed + 1 skipped** (4 from Chunk 0 + 1 from Chunk 2 scene smoke +
-   13 from Chunk 3 acceptance + 1 mjx skip)
+   → **18 passed + 1 skipped** (4 from Chunk 0 + 1 from Chunk 2 scene smoke +
+   13 from Chunk 3 acceptance + 1 mjx skip = 18 passed; the +1 skip is mjx)
 6. sim-server cleanup: `software/sim-server/tests/integration/test_elrobot_acceptance.py`
-   no longer exists; `pytest software/sim-server/tests/ -q` → 78 passed
-   (91 - 13)
+   no longer exists; `pytest software/sim-server/tests/ -q` → **73 passed**
+   (post-Chunk-0 sim-server-alone baseline is 86 per Chunk 0 spec Section 5.5;
+   minus 13 acceptance tests removed by Chunk 3 = 73)
 7. `make check-arch-invariants` green
 8. Phase G.8 grep:
-   `grep -rn 'test_elrobot_acceptance' software/ --include='*.py'` → no stale
-   references
+   `grep -rn 'test_elrobot_acceptance' software/ hardware/ Makefile docs/`
+   (with the same exclusions as Chunk 0 — `docs/superpowers/.*2026-04-1[012]`
+   and `vendor/menagerie/VENDOR.md`) → no stale references
 9. `git status` clean
 
 ### Risks (Chunk-3-specific)
@@ -474,6 +488,14 @@ Chunk 0 (✅ 6ef605b)
    │
    └────────────────→ Chunk 3 (A1: test)  [no direct dependency]
 ```
+
+**Definitions** (used throughout this section and Sections 3-5 prerequisites):
+- **hard prerequisite** = a chunk's success criterion fails without it; the
+  chunk cannot prove "done" until the prereq lands
+- **soft prerequisite** = the chunk can technically execute without it, but
+  reverse-ordering produces an intermediate state that fails some
+  cross-chunk invariant (typically the cp -r self-containment count) and
+  forces re-validation later
 
 The **only true hard dependency** is Chunk 1 → Chunk 3. Chunk 2 in the
 middle is logical-order optimization, not technical necessity. We chose
@@ -572,7 +594,8 @@ enumerated by recall instead of by exhaustive search.
   lesson for future plan authors. Suggested location:
   `docs/superpowers/notes/lessons-from-mvp3-chunk0.md`. Independent task,
   scheduled **after** this roadmap spec lands but **before** Chunk 1
-  brainstorming begins.
+  brainstorming begins. **This timing is decided here**, not in Open
+  Decisions — it does not appear in U4.
 
 ### Out of MVP-3 scope (debt-related, not assigned)
 
@@ -652,10 +675,10 @@ also..." temptation is recorded in memory for MVP-4 brainstorming.
 | **U1** | Chunk 3 VERSION bump | `0.2.2` patch | `0.3.0` minor (mark "MVP-3 Foundation done") | Cosmetic; just affects VERSION display |
 | **U2** | Chunk 3 atomic vs split commit | Atomic (1 commit) | Split into "rewrite in place" + "move + cleanup" | Affects readability vs atomicity |
 | **U3** | Chunk 2 manual viewer GUI gate | Optional ("GUI environment, otherwise skipped") | Mandatory; or remove entirely | Depends on user dev environment (WSL2 + WSLg has GUI) |
-| **U4** | Section 7 meta-debt strategy | (α) chunk-level grep-first + (γ) lessons-learned doc | (β) modify writing-plans skill template | (γ) timing — before or after Chunk 1 brainstorming |
+| **U4** | Section 7 meta-debt strategy | (α) chunk-level grep-first + (γ) lessons-learned doc (γ timing already decided in Section 7: after spec lands, before Chunk 1 brainstorming) | (β) modify writing-plans skill template | Strategy choice; γ timing not subject to U4 |
 | **U5** | Item 4 (`★` glyph) placement | Chunk 3 fold-in | Defer entirely to MVP-4 / MVP-5 (upstream prep only) | Cosmetic |
 | **U6** | "Zero physics drift" tolerance carve-out | Allow tolerance adjustment as test infrastructure | Disallow (treat tolerance as physics) | Affects Chunk 3 rewrite latitude |
-| **U7** | git tag strategy | No tag (consistent with Chunk 0 / MVP-2) | Tag `mvp3-foundation` at completion; or per-chunk tags | History readability vs ceremony |
+| **U7** | git tag strategy | No tag (Chunk 0 and MVP-2 both used naked `main` commits without tags) | Tag `mvp3-foundation` at completion; or per-chunk tags | History readability vs ceremony |
 
 ### Known risks (priority sorted)
 
@@ -716,13 +739,52 @@ also..." temptation is recorded in memory for MVP-4 brainstorming.
 
 ---
 
-## Appendix: Spec metadata
+## Appendix A: Test count chain
+
+Authoritative test counts at each transition. All values verified against
+the predecessor Chunk 0 spec (Section 5.5: post-Chunk-0 sim-server-alone =
+86 passed; full `make sim-test` = 90 passed). Use this table to spot any
+arithmetic drift in success criteria across the 3 chunk plans.
+
+| Stage | `make sim-test` | sim-server alone | engine-tier alone | cp -r /tmp self-containment |
+|---|---|---|---|---|
+| Post-Chunk-0 (HEAD `6ef605b`) | 90+1s | 86 | 4+1s | 4+1s |
+| Post-Chunk-1 (A2: assets+urdf) | 90+1s | 86 | 4+1s | 4+1s (+url path delta) |
+| Post-Chunk-2 (A3: scene.xml) | 91+1s | 86 | 5+1s | 5+1s |
+| Post-Chunk-3 (A1: test decoupling) | 91+1s | 73 | 18+1s | **18+1s** |
+
+Notes:
+- "+1s" means +1 skipped (`test_mjx_compat.py` placeholder; mjx not
+  installed in dev env)
+- The Chunk 3 transition: sim-server -13 (acceptance test deleted from
+  `software/sim-server/tests/integration/`), engine-tier +13 (rewritten
+  acceptance test moved to package). Net `make sim-test` = 0
+- 18 passed = 4 (Chunk 0 mimic_gripper + urdf_parity) + 1 (Chunk 2
+  scene_loadable) + 13 (Chunk 3 acceptance) = 18
+- 73 passed = 86 sim-server-alone post-Chunk-0 baseline − 13 acceptance
+  tests removed by Chunk 3 = 73
+
+## Appendix B: Spec amendment hook
+
+If a chunk's brainstorming surfaces a roadmap-level concern that
+invalidates a Section 3/4/5 boundary statement, a Section 6 dependency
+claim, or any of the U1-U7 defaults — **append a `## Spec amendments`
+section to this file before starting the affected chunk's plan**, similar
+to the amendment chain in `2026-04-12-mvp3-first-class-mjcf-design.md`
+(the Chunk 0 spec). Do not silently overwrite existing content. Each
+amendment entry should include date, what was found, what changed, and
+why. The intent is to make Section 8's "do not change MVP-3 scope
+mid-execution" enforceable: amendments are visible, traceable, and
+required to be discussed during the per-chunk brainstorming, not patched
+into a chunk plan.
+
+## Appendix C: Spec metadata
 
 - **Author**: brainstorming session 2026-04-12
 - **Brainstorming process**: 4 clarifying questions (Q1 scope, Q2 end state,
   Q3 A6 in/out, Q4 chunk ordering) + Approach A (lean roadmap) chosen
 - **Predecessor commit**: `6ef605b` (Chunk 0)
-- **Estimated MVP-3 Foundation total work**: 3 chunks, 50-70 file ops,
+- **Estimated MVP-3 Foundation total work**: 3 chunks, 40-50 file ops,
   2000-3000 plan lines combined, 2-4 hours single-session execution
 - **End-state version**: `mujoco/elrobot_follower/VERSION` 0.1.0 → 0.2.2 (or
   0.3.0 per Open Decision U1)
