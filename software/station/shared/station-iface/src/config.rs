@@ -227,3 +227,142 @@ impl Config {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SimulationRuntime subsystem configuration
+// ---------------------------------------------------------------------------
+//
+// These types live in station_iface (not sim-runtime) to avoid a circular
+// dependency: sim-runtime depends on station_iface for the StationEngine
+// trait, so station_iface cannot in turn depend on sim-runtime to embed
+// config types in the top-level Config struct. The "config-layer" crate
+// hosts them; sim-runtime re-exports them for convenience.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SimMode {
+    Internal,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogCapture {
+    #[default]
+    File,
+    Inherit,
+    Null,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimRuntimeConfig {
+    pub enabled: bool,
+    pub mode: SimMode,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<Vec<String>>,
+
+    #[serde(rename = "socket-path", default, skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<PathBuf>,
+
+    #[serde(rename = "runtime-dir", default, skip_serializing_if = "Option::is_none")]
+    pub runtime_dir: Option<PathBuf>,
+
+    #[serde(rename = "startup-timeout-ms", default = "default_sim_startup_timeout")]
+    pub startup_timeout_ms: u64,
+
+    #[serde(rename = "shutdown-timeout-ms", default = "default_sim_shutdown_timeout")]
+    pub shutdown_timeout_ms: u64,
+
+    #[serde(rename = "log-capture", default)]
+    pub log_capture: LogCapture,
+
+    #[serde(rename = "log-file", default, skip_serializing_if = "Option::is_none")]
+    pub log_file: Option<PathBuf>,
+}
+
+fn default_sim_startup_timeout() -> u64 {
+    5000
+}
+
+fn default_sim_shutdown_timeout() -> u64 {
+    2000
+}
+
+impl SimRuntimeConfig {
+    /// Validate the config in isolation (no cross-field mutual-exclusion
+    /// rules — those would re-introduce the sim vs real-driver coupling
+    /// the v2 architecture explicitly rejected). Returns a static message
+    /// for each individual-field precondition.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.enabled {
+            return Ok(());
+        }
+        match self.mode {
+            SimMode::Internal => {
+                if self.launcher.is_none() {
+                    return Err("sim-runtime.mode=internal requires launcher");
+                }
+            }
+            SimMode::External => {
+                if self.socket_path.is_none() {
+                    return Err("sim-runtime.mode=external requires socket-path");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod sim_runtime_config_tests {
+    use super::*;
+
+    fn base() -> SimRuntimeConfig {
+        SimRuntimeConfig {
+            enabled: true,
+            mode: SimMode::Internal,
+            launcher: None,
+            socket_path: None,
+            runtime_dir: None,
+            startup_timeout_ms: 5000,
+            shutdown_timeout_ms: 2000,
+            log_capture: LogCapture::File,
+            log_file: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_disabled_is_ok() {
+        let mut c = base();
+        c.enabled = false;
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_internal_requires_launcher() {
+        let c = base();
+        assert_eq!(
+            c.validate(),
+            Err("sim-runtime.mode=internal requires launcher")
+        );
+
+        let mut c2 = base();
+        c2.launcher = Some(vec!["python3".into(), "-m".into(), "norma_sim".into()]);
+        assert!(c2.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_requires_socket_path() {
+        let mut c = base();
+        c.mode = SimMode::External;
+        assert_eq!(
+            c.validate(),
+            Err("sim-runtime.mode=external requires socket-path")
+        );
+
+        let mut c2 = c.clone();
+        c2.socket_path = Some(PathBuf::from("/tmp/sim.sock"));
+        assert!(c2.validate().is_ok());
+    }
+}

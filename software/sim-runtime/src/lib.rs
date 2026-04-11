@@ -27,6 +27,6 @@ pub mod proto;
 
 pub use errors::SimRuntimeError;
 pub use runtime::SimulationRuntime;
-// Config types live in station-iface to avoid circular crate deps; the
-// re-export below is un-commented once Task 3.2 adds them to that crate.
-// pub use station_iface::config::{LogCapture, SimMode, SimRuntimeConfig};
+// Config types live in station-iface to avoid circular crate deps;
+// re-export them here for convenience.
+pub use station_iface::config::{LogCapture, SimMode, SimRuntimeConfig};
