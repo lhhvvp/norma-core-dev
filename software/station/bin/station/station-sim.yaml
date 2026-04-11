@@ -1,0 +1,43 @@
+## Scenario A — internal sim only.
+#
+# Station launches a `python -m norma_sim` subprocess via sim-runtime's
+# ChildProcessBackend, the st3215-compat bridge presents the sim as a
+# virtual `sim://bus0` ST3215 bus, and no real hardware drivers are
+# touched. This is the canonical "no hardware / no debugging" scenario
+# the v2 design targets.
+
+sim-runtime:
+  enabled: true
+  mode: internal
+  launcher:
+    - python3
+    - -m
+    - norma_sim
+    - --manifest
+    - hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+    - --physics-hz
+    - "500"
+    - --publish-hz
+    - "100"
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: elrobot_follower
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+    legacy-bus-serial: "sim://bus0"
+
+drivers:
+  st3215:
+    enabled: false
+  system-info: true
+  usb-video:
+    enabled: false
+
+inference:
+  - queue-id: inference/normvla
+    shm: /dev/shm/normvla
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://bus0"
+    update-interval: 100ms
