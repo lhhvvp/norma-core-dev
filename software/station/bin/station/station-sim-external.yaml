@@ -1,0 +1,34 @@
+## Scenario B — external sim.
+#
+# Station connects to an already-running `python -m norma_sim
+# --socket /tmp/norma-sim-dev.sock` and does NOT own its lifecycle.
+# Developers typically use this when iterating on the Python side so
+# the sim doesn't restart every time Station restarts. The bridge
+# still presents `sim://bus0` so legacy clients don't know the
+# difference from scenario A.
+
+sim-runtime:
+  enabled: true
+  mode: external
+  socket-path: /tmp/norma-sim-dev.sock
+  startup-timeout-ms: 5000
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: elrobot_follower
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+    legacy-bus-serial: "sim://bus0"
+
+drivers:
+  st3215:
+    enabled: false
+  system-info: true
+
+inference:
+  - queue-id: inference/normvla
+    shm: /dev/shm/normvla
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://bus0"
+    update-interval: 100ms

@@ -1,3 +1,17 @@
 .DS_Store
 /target/
 __pycache__
+
+# Simulation runtime state
+/tmp/norma-sim*
+sim-backend.log
+sim-runtime.log
+station_data/sim-*.log
+
+# Session-local codex pointer
+.context/
+
+# Yarn install artifacts (Chunk 8 Task 8.0 built station-viewer/dist)
+software/station/clients/station-viewer/node_modules/
+software/station/clients/station-viewer/dist/
+js-vendor/

@@ -1,0 +1,233 @@
+syntax = "proto3";
+package norma_sim.world.v1;
+
+// —— Refs：字符串寻址，不是 bus+motor_id ——
+
+message RobotRef     { string robot_id = 1; }
+message ActuatorRef  { string robot_id = 1; string actuator_id = 2; }
+message SensorRef    { string robot_id = 1; string sensor_id   = 2; }
+
+// —— 时间基准：所有帧都带 ——
+
+message WorldClock {
+  uint64 world_tick   = 1;  // monotonic sim tick, canonical time, independent of wall clock
+  uint64 sim_time_ns  = 2;  // = world_tick * physics_timestep_ns (derived)
+  uint64 wall_time_ns = 3;  // sim host CLOCK_MONOTONIC; cross-process comparison forbidden
+}
+
+// —— Actuator 能力 ——
+
+message ActuatorCapability {
+  enum Kind {
+    CAP_UNSPECIFIED        = 0;
+    CAP_REVOLUTE_POSITION  = 1;  // value = rad
+    CAP_PRISMATIC_POSITION = 2;  // value = m
+    CAP_GRIPPER_PARALLEL   = 3;  // value = 0..1 normalized
+  }
+  Kind kind              = 1;
+  double limit_min       = 2;
+  double limit_max       = 3;
+  double effort_limit    = 4;
+  double velocity_limit  = 5;
+}
+
+message SensorCapability {
+  enum Kind {
+    SENSE_UNSPECIFIED = 0;
+    SENSE_JOINT_STATE = 1;
+    SENSE_CAMERA_RGB  = 2;
+    SENSE_IMU_6DOF    = 3;
+  }
+  Kind kind = 1;
+}
+
+// —— Actuation 命令 ——
+
+message ActuationCommand {
+  ActuatorRef ref = 1;
+  oneof intent {
+    SetPosition    set_position    = 10;
+    SetVelocity    set_velocity    = 11;
+    SetEffort      set_effort      = 12;
+    EnableTorque   enable_torque   = 13;
+    DisableTorque  disable_torque  = 14;
+    ResetActuator  reset_actuator  = 15;
+  }
+}
+
+message SetPosition   { double value = 1; double max_velocity = 2; }
+message SetVelocity   { double value = 1; }
+message SetEffort     { double value = 1; }
+message EnableTorque  {}
+message DisableTorque {}
+message ResetActuator {}
+
+// —— Actuator state ——
+
+message ActuatorState {
+  ActuatorRef ref = 1;
+  double position_value      = 2;
+  double velocity_value      = 3;
+  double effort_value        = 4;
+  bool   torque_enabled      = 5;
+  bool   moving              = 6;
+  double goal_position_value = 7;
+}
+
+// —— Sensor sample ——
+
+message SensorSample {
+  SensorRef ref = 1;
+  oneof payload {
+    JointStateSample joint_state  = 10;
+    CameraFrame      camera_frame = 11;
+    ImuSample        imu          = 12;
+  }
+}
+
+message JointStateSample {
+  double position_value = 1;
+  double velocity_value = 2;
+  double effort_value   = 3;
+}
+
+message CameraFrame {
+  uint32 width        = 1;
+  uint32 height       = 2;
+  string encoding     = 3;
+  bytes  data         = 4;
+  uint64 capture_tick = 5;
+}
+
+message ImuSample { /* MVP-1 placeholder */ }
+
+// —— QoS ——
+
+enum QosLane {
+  QOS_UNSPECIFIED      = 0;
+  QOS_LOSSY_SETPOINT   = 1;
+  QOS_RELIABLE_CONTROL = 2;
+}
+
+message ActuationBatch {
+  WorldClock as_of = 1;
+  repeated ActuationCommand commands = 2;
+  QosLane lane = 3;
+}
+
+// —— Handshake + 顶层 ——
+
+message WorldDescriptor {
+  string world_name = 1;
+  repeated RobotDescriptor robots = 2;
+  WorldClock initial_clock = 3;
+  uint32 publish_hz = 4;
+  uint32 physics_hz = 5;
+}
+
+message RobotDescriptor {
+  string robot_id = 1;
+  repeated ActuatorDescriptor actuators = 2;
+  repeated SensorDescriptor sensors = 3;
+}
+
+message ActuatorDescriptor {
+  string actuator_id = 1;
+  string display_name = 2;
+  ActuatorCapability capability = 3;
+}
+
+message SensorDescriptor {
+  string sensor_id = 1;
+  string display_name = 2;
+  SensorCapability capability = 3;
+}
+
+message WorldSnapshot {
+  WorldClock clock = 1;
+  repeated ActuatorState actuators = 2;
+  repeated SensorSample  sensors = 3;
+}
+
+// —— SimHealth ——
+
+message SimHealth {
+  string runtime_session_id = 1;
+  string backend_kind = 2;
+  uint64 world_tick = 3;
+  uint64 sim_time_ns = 4;
+  uint64 wall_time_unix_ns = 5;
+  string scheduler = 6;
+  uint32 physics_hz_target = 7;
+  uint32 publish_hz_target = 8;
+  float  physics_hz_achieved = 9;
+  float  publish_hz_achieved = 10;
+  bool   backend_alive = 11;
+  BackendTermination termination = 12;
+  bool   handshake_complete = 13;
+  uint64 overrun_count_total = 14;
+  uint32 overrun_count_1s = 15;
+  int64  max_lag_ns_1s = 16;
+  uint64 snapshot_count_total = 17;
+  uint64 actuation_count_total = 18;
+  uint64 decode_error_count = 19;
+  string world_name = 20;
+  repeated string robot_ids = 21;
+  uint32 actuator_count = 22;
+  uint32 sensor_count = 23;
+}
+
+message BackendTermination {
+  enum Cause {
+    BT_UNSPECIFIED          = 0;
+    BT_CLEAN                = 1;
+    BT_CRASHED              = 2;
+    BT_KILLED_BY_SUPERVISOR = 3;
+    BT_SIGNALED_BY_OS       = 4;
+  }
+  Cause cause = 1;
+  int32 exit_code = 2;
+  int32 signal = 3;
+  bytes stderr_tail = 4;
+}
+
+// —— Envelope ——
+
+message Envelope {
+  oneof payload {
+    Hello          hello          = 1;
+    Welcome        welcome        = 2;
+    ActuationBatch actuation      = 3;
+    WorldSnapshot  snapshot       = 4;
+    Goodbye        goodbye        = 5;
+    Error          error          = 6;
+  }
+}
+
+message Hello {
+  uint32 protocol_version = 1;
+  string client_role = 2;
+  string client_id = 3;
+}
+
+message Welcome {
+  uint32 protocol_version = 1;
+  WorldDescriptor world = 2;
+}
+
+message Goodbye { string reason = 1; }
+
+message Error {
+  enum Code {
+    E_UNSPECIFIED        = 0;
+    E_PROTOCOL_VERSION   = 1;
+    E_UNKNOWN_ROBOT      = 2;
+    E_UNKNOWN_ACTUATOR   = 3;
+    E_UNKNOWN_CAPABILITY = 4;
+    E_INVALID_COMMAND    = 5;
+    E_SIM_INTERNAL       = 6;
+    E_BACKPRESSURE       = 7;
+  }
+  Code code = 1;
+  string message = 2;
+}

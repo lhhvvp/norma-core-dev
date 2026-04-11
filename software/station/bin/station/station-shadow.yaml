@@ -1,0 +1,52 @@
+## Scenario C — shadow mode (sim + real driver coexistence).
+#
+# Both the real ST3215 driver AND the sim subsystem run at the same
+# time. The bridge uses a distinct `sim://elrobot-shadow` bus serial
+# so commands explicitly targeting the real hardware bus (via its
+# EEPROM serial) do NOT accidentally reach the sim, and vice versa.
+# Inference state streams to two separate shm paths so a downstream
+# comparator can diff real vs sim in real time.
+
+sim-runtime:
+  enabled: true
+  mode: internal
+  launcher:
+    - python3
+    - -m
+    - norma_sim
+    - --manifest
+    - hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+    - --physics-hz
+    - "500"
+    - --publish-hz
+    - "100"
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: elrobot_follower
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+    legacy-bus-serial: "sim://elrobot-shadow"
+
+drivers:
+  st3215:
+    enabled: true
+    current-threshold: 100
+    deadband: 20
+  usb-video:
+    enabled: true
+  system-info: true
+
+inference:
+  - queue-id: inference/normvla-real
+    shm: /dev/shm/normvla-real
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "ST3215-BUS-A1B2C3"   # placeholder; fill with actual EEPROM serial
+    update-interval: 100ms
+  - queue-id: inference/normvla-sim
+    shm: /dev/shm/normvla-sim
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://elrobot-shadow"
+    update-interval: 100ms

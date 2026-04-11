@@ -1,4 +1,6 @@
 use clap::Parser;
+use sim_runtime::SimulationRuntime;
+use st3215_compat_bridge::{start_st3215_compat_bridge, BridgeHandle};
 use station_iface::StationEngine;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -67,6 +69,12 @@ struct Station {
 
     engine: Arc<Engine>,
 
+    // Simulation subsystem — present iff config.sim_runtime is set and enabled.
+    // Started after drivers (in main()), stopped in the reverse order before
+    // Station::shutdown on the exit path.
+    sim_runtime: parking_lot::Mutex<Option<Arc<SimulationRuntime>>>,
+    bridges: parking_lot::Mutex<Vec<Arc<BridgeHandle>>>,
+
     #[cfg(target_os = "macos")]
     usbvideo_instances: parking_lot::Mutex<Vec<Arc<usbvideo::pipeline::USBVideoManager<usbvideo::osx::CameraMacDriver>>>>,
     #[cfg(target_os = "linux")]
@@ -119,8 +127,93 @@ impl Station {
                 main_queue: None,
                 inference: Mutex::new(None),
              }),
+            sim_runtime: parking_lot::Mutex::new(None),
+            bridges: parking_lot::Mutex::new(Vec::new()),
             usbvideo_instances: parking_lot::Mutex::new(Vec::new()),
         })
+    }
+
+    /// Start the SimulationRuntime subsystem if `config.sim-runtime`
+    /// is present and enabled. Must run AFTER `start_commands_queue`
+    /// (so the commands queue exists before bridges subscribe) and
+    /// BEFORE `start_drivers` (so shadow-mode real + sim can race
+    /// into place with well-defined order).
+    async fn start_sim_runtime(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let sim_cfg = match &self.config.sim_runtime {
+            Some(cfg) if cfg.enabled => cfg.clone(),
+            _ => {
+                log::info!("sim-runtime disabled (no config or enabled=false)");
+                return Ok(());
+            }
+        };
+        log::info!(
+            "Starting sim-runtime (mode={:?}, startup_timeout_ms={})",
+            sim_cfg.mode,
+            sim_cfg.startup_timeout_ms
+        );
+        let engine: Arc<dyn StationEngine> = self.engine.clone();
+        let runtime = SimulationRuntime::start(
+            self.normfs.clone(),
+            engine,
+            sim_cfg,
+        )
+        .await
+        .map_err(|e| format!("sim-runtime start: {:?}", e))?;
+        log::info!("sim-runtime started: {}", runtime.world_descriptor().world_name);
+        *self.sim_runtime.lock() = Some(runtime);
+        Ok(())
+    }
+
+    /// Start any enabled compat bridges. Depends on
+    /// `start_sim_runtime` having populated `self.sim_runtime`.
+    async fn start_bridges(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(bridge_cfg) = self.config.bridges.st3215_compat.clone() else {
+            log::info!("no st3215_compat bridge configured");
+            return Ok(());
+        };
+        if !bridge_cfg.enabled {
+            log::info!("st3215_compat bridge disabled");
+            return Ok(());
+        }
+        let Some(sim_runtime) = self.sim_runtime.lock().clone() else {
+            return Err(
+                "st3215_compat bridge enabled but sim-runtime is not started \
+                 (Config::validate() should have caught this)"
+                    .into(),
+            );
+        };
+        let engine: Arc<dyn StationEngine> = self.engine.clone();
+        let handle = start_st3215_compat_bridge(
+            self.normfs.clone(),
+            engine,
+            sim_runtime,
+            bridge_cfg,
+        )
+        .await
+        .map_err(|e| format!("st3215_compat bridge start: {:?}", e))?;
+        log::info!("st3215_compat bridge started");
+        self.bridges.lock().push(handle);
+        Ok(())
+    }
+
+    /// Stop bridges first, then sim-runtime. Called on the shutdown
+    /// path before `Station::shutdown` (which closes NormFS).
+    async fn stop_sim_and_bridges(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let bridges = {
+            let mut b = self.bridges.lock();
+            std::mem::take(&mut *b)
+        };
+        for handle in bridges {
+            if let Err(e) = handle.shutdown().await {
+                log::warn!("bridge shutdown: {:?}", e);
+            }
+        }
+        if let Some(runtime) = self.sim_runtime.lock().take() {
+            if let Err(e) = runtime.shutdown().await {
+                log::warn!("sim-runtime shutdown: {:?}", e);
+            }
+        }
+        Ok(())
     }
 
     async fn initialize_normfs(
@@ -337,6 +430,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut station = Station::new(&args).await?;
 
+    // Validate the full Config — catches bad sim-runtime / bridges
+    // configurations (e.g. bridge enabled but sim-runtime missing,
+    // legacy_bus_serial without sim:// prefix) before any I/O.
+    station
+        .config
+        .validate()
+        .map_err(|e| format!("config validation: {}", e))?;
+
     station.start_main_queue().await?;
     log::info!("Main queue started");
 
@@ -350,8 +451,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     *station.engine.inference.lock() = Some(inference);
 
+    // Start the sim subsystem before drivers so shadow mode's
+    // real + sim commands flow through well-defined init order.
+    station.start_sim_runtime().await?;
+
     station.start_drivers().await?;
     log::info!("Drivers started");
+
+    // Bridges subscribe to the commands queue just like the real
+    // driver did — must start after both sim-runtime and drivers so
+    // all prerequisite queues exist.
+    station.start_bridges().await?;
 
     let mut server_handle: Option<tokio::task::JoinHandle<()>> = None;
     if let Some(tcp_addr_str) = args.tcp {
@@ -437,6 +547,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(inference) = station.engine.inference.lock().as_ref() {
         inference.shutdown();
+    }
+
+    // Shut down the sim subsystem before closing NormFS so any final
+    // SimHealth events the bridge emits land in their queues before
+    // the store stops accepting writes.
+    if let Err(e) = station.stop_sim_and_bridges().await {
+        log::warn!("sim+bridges shutdown: {}", e);
     }
 
     station.shutdown().await?;

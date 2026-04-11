@@ -10,6 +10,20 @@ pub struct Config {
 
     #[serde(rename = "cloud-offload", skip_serializing_if = "Option::is_none")]
     pub cloud_offload: Option<CloudOffloadConfig>,
+
+    // Simulation-subsystem configuration (Chunk 8 Task 8.1). The
+    // types SimRuntimeConfig / SimMode / LogCapture were added to
+    // this file earlier (Chunk 3 Task 3.2) so that both station_iface
+    // and sim-runtime can share them without a circular crate dep.
+    #[serde(rename = "sim-runtime", default, skip_serializing_if = "Option::is_none")]
+    pub sim_runtime: Option<SimRuntimeConfig>,
+
+    // Compat bridge(s) layered on top of SimulationRuntime.
+    // `Bridges` defaults to all-None and is skipped during
+    // serialisation when empty, so existing station yamls load
+    // unchanged.
+    #[serde(default, skip_serializing_if = "Bridges::is_empty")]
+    pub bridges: Bridges,
 }
 
 impl Default for Config {
@@ -18,7 +32,152 @@ impl Default for Config {
             drivers: Drivers::default(),
             inference: Some(vec![Inference::default_normvla()]),
             cloud_offload: None,
+            sim_runtime: None,
+            bridges: Bridges::default(),
         }
+    }
+}
+
+impl Config {
+    /// Validate the top-level Config.
+    ///
+    /// Rules (all individually weak — NO driver ↔ bridge mutual
+    /// exclusion, because shadow mode explicitly needs both):
+    ///   1. If `sim-runtime` is present, its own validate() passes.
+    ///   2. If `bridges.st3215_compat` is enabled, then:
+    ///      a. `sim-runtime` must be present and enabled, AND
+    ///      b. the bridge config's own validate() passes
+    ///         (which enforces the `sim://` prefix on
+    ///         legacy-bus-serial).
+    ///
+    /// Rule (1) is a pure pass-through; rule (2) is the one
+    /// cross-field check. Both sim-runtime and bridges are
+    /// entirely orthogonal to `drivers.st3215` — a shadow config
+    /// with both real driver and sim+bridge enabled passes.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(sim) = &self.sim_runtime {
+            sim.validate().map_err(String::from)?;
+        }
+        if let Some(bridge) = &self.bridges.st3215_compat {
+            if bridge.enabled {
+                let sim_enabled = self
+                    .sim_runtime
+                    .as_ref()
+                    .map_or(false, |s| s.enabled);
+                if !sim_enabled {
+                    return Err(
+                        "bridges.st3215_compat requires sim-runtime to be enabled"
+                            .into(),
+                    );
+                }
+                bridge.validate().map_err(String::from)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod config_validate_tests {
+    use super::*;
+
+    fn base_sim() -> SimRuntimeConfig {
+        SimRuntimeConfig {
+            enabled: true,
+            mode: SimMode::Internal,
+            launcher: Some(vec!["python3".into(), "-m".into(), "norma_sim".into()]),
+            socket_path: None,
+            runtime_dir: None,
+            startup_timeout_ms: 5000,
+            shutdown_timeout_ms: 2000,
+            log_capture: LogCapture::File,
+            log_file: None,
+        }
+    }
+
+    fn base_bridge() -> St3215CompatBridgeConfig {
+        St3215CompatBridgeConfig {
+            enabled: true,
+            robot_id: "elrobot_follower".into(),
+            preset_path: PathBuf::from(
+                "software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml",
+            ),
+            legacy_bus_serial: "sim://bus0".into(),
+        }
+    }
+
+    #[test]
+    fn test_validate_empty_ok() {
+        let c = Config::default();
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn test_bridge_requires_sim_runtime() {
+        let mut c = Config::default();
+        c.bridges = Bridges {
+            st3215_compat: Some(base_bridge()),
+        };
+        // sim_runtime is None — should fail.
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("requires sim-runtime"));
+    }
+
+    #[test]
+    fn test_bridge_requires_sim_runtime_enabled() {
+        let mut c = Config::default();
+        let mut sim = base_sim();
+        sim.enabled = false;
+        c.sim_runtime = Some(sim);
+        c.bridges = Bridges {
+            st3215_compat: Some(base_bridge()),
+        };
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("requires sim-runtime"));
+    }
+
+    #[test]
+    fn test_sim_plus_bridge_passes() {
+        let mut c = Config::default();
+        c.sim_runtime = Some(base_sim());
+        c.bridges = Bridges {
+            st3215_compat: Some(base_bridge()),
+        };
+        assert!(c.validate().is_ok());
+    }
+
+    /// Shadow mode: real st3215 driver enabled + sim + bridge enabled
+    /// must pass validation. The v2 architecture explicitly supports
+    /// this — no mutual-exclusion rule between drivers.st3215 and
+    /// bridges.st3215_compat.
+    #[test]
+    fn test_real_and_sim_can_coexist() {
+        let mut c = Config::default();
+        c.drivers.st3215 = Some(St3215Config::default());
+        c.sim_runtime = Some(base_sim());
+        let mut bridge = base_bridge();
+        bridge.legacy_bus_serial = "sim://elrobot-shadow".into();
+        c.bridges = Bridges {
+            st3215_compat: Some(bridge),
+        };
+        assert!(
+            c.validate().is_ok(),
+            "shadow mode config must validate: {:?}",
+            c.validate()
+        );
+    }
+
+    #[test]
+    fn test_bridge_bad_prefix_rejected() {
+        let mut c = Config::default();
+        c.sim_runtime = Some(base_sim());
+        let mut bridge = base_bridge();
+        bridge.legacy_bus_serial = "not-sim".into();
+        c.bridges = Bridges {
+            st3215_compat: Some(bridge),
+        };
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("sim://"));
     }
 }
 
@@ -225,5 +384,258 @@ impl Config {
             config.to_file(path)?;
             Ok(config)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SimulationRuntime subsystem configuration
+// ---------------------------------------------------------------------------
+//
+// These types live in station_iface (not sim-runtime) to avoid a circular
+// dependency: sim-runtime depends on station_iface for the StationEngine
+// trait, so station_iface cannot in turn depend on sim-runtime to embed
+// config types in the top-level Config struct. The "config-layer" crate
+// hosts them; sim-runtime re-exports them for convenience.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SimMode {
+    Internal,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogCapture {
+    #[default]
+    File,
+    Inherit,
+    Null,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimRuntimeConfig {
+    pub enabled: bool,
+    pub mode: SimMode,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<Vec<String>>,
+
+    #[serde(rename = "socket-path", default, skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<PathBuf>,
+
+    #[serde(rename = "runtime-dir", default, skip_serializing_if = "Option::is_none")]
+    pub runtime_dir: Option<PathBuf>,
+
+    #[serde(rename = "startup-timeout-ms", default = "default_sim_startup_timeout")]
+    pub startup_timeout_ms: u64,
+
+    #[serde(rename = "shutdown-timeout-ms", default = "default_sim_shutdown_timeout")]
+    pub shutdown_timeout_ms: u64,
+
+    #[serde(rename = "log-capture", default)]
+    pub log_capture: LogCapture,
+
+    #[serde(rename = "log-file", default, skip_serializing_if = "Option::is_none")]
+    pub log_file: Option<PathBuf>,
+}
+
+fn default_sim_startup_timeout() -> u64 {
+    5000
+}
+
+fn default_sim_shutdown_timeout() -> u64 {
+    2000
+}
+
+impl SimRuntimeConfig {
+    /// Validate the config in isolation (no cross-field mutual-exclusion
+    /// rules — those would re-introduce the sim vs real-driver coupling
+    /// the v2 architecture explicitly rejected). Returns a static message
+    /// for each individual-field precondition.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.enabled {
+            return Ok(());
+        }
+        match self.mode {
+            SimMode::Internal => {
+                if self.launcher.is_none() {
+                    return Err("sim-runtime.mode=internal requires launcher");
+                }
+            }
+            SimMode::External => {
+                if self.socket_path.is_none() {
+                    return Err("sim-runtime.mode=external requires socket-path");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ST3215 compat bridge configuration
+// ---------------------------------------------------------------------------
+//
+// Hosted in station_iface (not in st3215-compat-bridge) to mirror the
+// circular-dependency fix used for SimRuntimeConfig. The bridge depends on
+// station_iface; station_iface's top-level Config needs to embed the
+// bridge config for YAML deserialisation; circular avoided by keeping
+// config types in the "config-layer" crate.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct St3215CompatBridgeConfig {
+    pub enabled: bool,
+    #[serde(rename = "robot-id")]
+    pub robot_id: String,
+    #[serde(rename = "preset-path")]
+    pub preset_path: PathBuf,
+    #[serde(rename = "legacy-bus-serial")]
+    pub legacy_bus_serial: String,
+}
+
+impl St3215CompatBridgeConfig {
+    /// Validate the compat bridge config in isolation.
+    ///
+    /// The single structural invariant is that `legacy_bus_serial`
+    /// MUST start with `sim://` — a hard boundary between simulated
+    /// and real hardware bus serials that eliminates an entire class
+    /// of "shadow mode routes commands to the wrong bus" bugs at
+    /// config load time.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if !self.legacy_bus_serial.starts_with("sim://") {
+            return Err(
+                "bridges.st3215_compat.legacy-bus-serial MUST start with \
+                 'sim://' to ensure structural separation from real \
+                 hardware bus serials",
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Bridges {
+    #[serde(
+        rename = "st3215_compat",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub st3215_compat: Option<St3215CompatBridgeConfig>,
+}
+
+impl Bridges {
+    pub fn is_empty(&self) -> bool {
+        self.st3215_compat.is_none()
+    }
+}
+
+#[cfg(test)]
+mod bridge_config_tests {
+    use super::*;
+
+    fn base() -> St3215CompatBridgeConfig {
+        St3215CompatBridgeConfig {
+            enabled: true,
+            robot_id: "elrobot_follower".into(),
+            preset_path: PathBuf::from(
+                "software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml",
+            ),
+            legacy_bus_serial: "my-custom-bus".into(),
+        }
+    }
+
+    #[test]
+    fn test_disabled_is_ok() {
+        let mut cfg = base();
+        cfg.enabled = false;
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_legacy_bus_serial_must_have_sim_prefix() {
+        let cfg = base();
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.contains("sim://"),
+            "error does not mention the required prefix: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_sim_prefix_accepted() {
+        let mut cfg = base();
+        cfg.legacy_bus_serial = "sim://bus0".into();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_bridges_is_empty_default() {
+        let b = Bridges::default();
+        assert!(b.is_empty());
+    }
+
+    #[test]
+    fn test_bridges_is_empty_after_set() {
+        let mut b = Bridges::default();
+        b.st3215_compat = Some(base());
+        assert!(!b.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sim_runtime_config_tests {
+    use super::*;
+
+    fn base() -> SimRuntimeConfig {
+        SimRuntimeConfig {
+            enabled: true,
+            mode: SimMode::Internal,
+            launcher: None,
+            socket_path: None,
+            runtime_dir: None,
+            startup_timeout_ms: 5000,
+            shutdown_timeout_ms: 2000,
+            log_capture: LogCapture::File,
+            log_file: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_disabled_is_ok() {
+        let mut c = base();
+        c.enabled = false;
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_internal_requires_launcher() {
+        let c = base();
+        assert_eq!(
+            c.validate(),
+            Err("sim-runtime.mode=internal requires launcher")
+        );
+
+        let mut c2 = base();
+        c2.launcher = Some(vec!["python3".into(), "-m".into(), "norma_sim".into()]);
+        assert!(c2.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_requires_socket_path() {
+        let mut c = base();
+        c.mode = SimMode::External;
+        assert_eq!(
+            c.validate(),
+            Err("sim-runtime.mode=external requires socket-path")
+        );
+
+        let mut c2 = c.clone();
+        c2.socket_path = Some(PathBuf::from("/tmp/sim.sock"));
+        assert!(c2.validate().is_ok());
     }
 }

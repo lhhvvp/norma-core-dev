@@ -1,0 +1,83 @@
+# ElRobot follower preset for the st3215-compat-bridge.
+#
+# This file is read by st3215-compat-bridge to turn sim-side
+# WorldSnapshot entries into the exact 71-byte ST3215 memory dumps
+# that legacy clients (station_py, the web UI's st3215 panel, etc.)
+# expect. `offset_steps` + `min_angle_steps` + `max_angle_steps`
+# determine the step ↔ rad conversion — the sim runs in rad and
+# the bridge maps into steps so the wire format is hardware-
+# identical.
+#
+# The `legacy_bus_serial` MUST start with `sim://` — enforced by
+# both preset_loader.rs::load_preset and St3215CompatBridgeConfig::
+# validate() so misconfiguration is caught before any queue work.
+
+robot_id: elrobot_follower
+legacy_bus_serial: "sim://bus0"
+
+motors:
+  - actuator_id: rev_motor_01
+    motor_id: 1
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: rev_motor_02
+    motor_id: 2
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: rev_motor_03
+    motor_id: 3
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: rev_motor_04
+    motor_id: 4
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: rev_motor_05
+    motor_id: 5
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: rev_motor_06
+    motor_id: 6
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: rev_motor_07
+    motor_id: 7
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  # Gripper primary joint starts at 0 rad (the URDF upper_limit is
+  # 2.2028 rad closed), so offset_steps is 0, not 2048.
+  - actuator_id: rev_motor_08
+    motor_id: 8
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 0
+    torque_limit: 500
+    voltage_nominal_v: 12.0

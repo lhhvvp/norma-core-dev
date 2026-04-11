@@ -18,6 +18,7 @@ tokio = { workspace = true }
 normfs = { workspace = true }
 systime = { path = "../../station/shared/systime-rs" }
 station_iface = { path = "../../station/shared/station-iface" }
+st3215-wire = { path = "../st3215-wire" }
 prost = { workspace = true }
 bytes = { workspace = true }
 parking_lot = { workspace = true }

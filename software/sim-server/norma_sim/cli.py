@@ -1,0 +1,178 @@
+"""`python -m norma_sim --manifest <path> ...` entry point.
+
+Wires together the world loader, scheduler, IpcServer and applier.
+The physics loop runs on a background thread and uses
+`loop.call_soon_threadsafe` to hand off WorldSnapshot broadcasts to
+the asyncio event loop where IpcServer lives.
+
+Shutdown paths:
+  - Ctrl+C (SIGINT) / SIGTERM → handler sets the stopping event,
+    scheduler exits, loop stops.
+  - Sim crash inside the scheduler thread → main loop sees the
+    thread is dead and exits.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import signal
+import sys
+import threading
+from pathlib import Path
+from typing import Optional
+
+from .ipc.codec import WorldClock
+from .ipc.server import IpcServer
+from .logging_setup import configure_logging
+from .scheduler.realtime import RealTimeScheduler
+from .world.actuation import ActuationApplier
+from .world.descriptor import build_world_descriptor
+from .world.manifest import load_manifest, verify_source_hash
+from .world.model import MuJoCoWorld
+from .world.snapshot import SnapshotBuilder
+
+
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(prog="norma_sim")
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="Path to world.yaml manifest",
+    )
+    ap.add_argument(
+        "--socket",
+        type=Path,
+        default=None,
+        help="UDS bind path (defaults to $NORMA_SIM_SOCKET_PATH)",
+    )
+    ap.add_argument("--physics-hz", type=int, default=500)
+    ap.add_argument("--publish-hz", type=int, default=100)
+    ap.add_argument("--log-level", default="INFO")
+    return ap.parse_args(argv)
+
+
+async def _async_main(args: argparse.Namespace) -> int:
+    log = logging.getLogger("norma_sim.cli")
+
+    socket_path: Optional[Path] = args.socket
+    if socket_path is None:
+        env = os.environ.get("NORMA_SIM_SOCKET_PATH")
+        if not env:
+            log.critical("no --socket and no $NORMA_SIM_SOCKET_PATH set")
+            return 1
+        socket_path = Path(env)
+    assert socket_path is not None
+
+    manifest = load_manifest(args.manifest)
+    verify_source_hash(args.manifest, manifest.mjcf_path)
+    log.info(
+        "manifest loaded",
+        extra={
+            "extra_fields": {
+                "world": manifest.world_name,
+                "robots": len(manifest.robots),
+                "mjcf": str(manifest.mjcf_path),
+            }
+        },
+    )
+
+    world = MuJoCoWorld(manifest, verify_hash=False)
+    descriptor = build_world_descriptor(
+        manifest, publish_hz=args.publish_hz, physics_hz=args.physics_hz
+    )
+    applier = ActuationApplier(world)
+    builder = SnapshotBuilder(world)
+
+    loop = asyncio.get_running_loop()
+
+    def on_actuation(batch) -> None:
+        applier.drain_and_apply(batch)
+
+    server = IpcServer(
+        socket_path=socket_path,
+        manifest=manifest,
+        descriptor=descriptor,
+        on_actuation=on_actuation,
+    )
+    await server.start()
+
+    stopping = threading.Event()
+    loop_stopped = threading.Event()
+
+    def publish_cb(tick: int) -> None:
+        clock = WorldClock(
+            world_tick=tick,
+            sim_time_ns=int(tick * (1e9 / args.physics_hz)),
+            wall_time_ns=0,
+        )
+        snap = builder.build(clock=clock)
+        # Hand the snapshot to the asyncio loop.
+        try:
+            loop.call_soon_threadsafe(server.broadcast_snapshot, snap)
+        except RuntimeError:
+            # Loop is stopping; drop silently.
+            pass
+
+    scheduler = RealTimeScheduler(
+        world,
+        physics_hz=args.physics_hz,
+        publish_hz=args.publish_hz,
+        on_publish=publish_cb,
+    )
+
+    def physics_thread() -> None:
+        try:
+            scheduler.run_forever()
+        finally:
+            loop_stopped.set()
+            loop.call_soon_threadsafe(_request_stop_event.set)
+
+    _request_stop_event = asyncio.Event()
+    t = threading.Thread(target=physics_thread, name="sim-physics", daemon=True)
+    t.start()
+
+    def _handle_signal(*_: object) -> None:
+        log.info("received shutdown signal")
+        stopping.set()
+        scheduler.stop()
+        try:
+            loop.call_soon_threadsafe(_request_stop_event.set)
+        except RuntimeError:
+            pass
+
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal)
+            except NotImplementedError:
+                # Windows — fallback to default handler
+                pass
+    except RuntimeError:
+        pass
+
+    try:
+        await _request_stop_event.wait()
+    finally:
+        scheduler.stop()
+        if t.is_alive():
+            t.join(timeout=2.0)
+        await server.stop()
+
+    log.info("norma_sim shut down cleanly")
+    return 0
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = _parse_args(argv)
+    configure_logging(args.log_level)
+    try:
+        return asyncio.run(_async_main(args))
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

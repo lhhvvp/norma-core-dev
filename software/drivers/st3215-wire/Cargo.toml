@@ -1,0 +1,10 @@
+[package]
+name = "st3215-wire"
+version = "0.1.0"
+edition = "2021"
+description = "Pure ST3215 servo protocol (wire format, register layout, pack/unpack). No I/O."
+
+[dependencies]
+bytes = { workspace = true }
+thiserror = "1"
+# Explicitly NO: tokio, normfs, station-iface, log. CI-enforced architecture invariant.

@@ -1,3 +1,9 @@
+//! ST3215 register map — EEPROM + RAM enums.
+//!
+//! Migrated verbatim from `software/drivers/st3215/src/protocol/memory.rs`
+//! (Task 2.2 of Chunk 2). Addresses, sizes, and descriptions must stay
+//! exactly in sync with the real hardware register layout.
+
 macro_rules! define_register_enum {
     ($enum_name:ident, $($variant:ident => ($addr:expr, $size:expr, $desc:expr)),* $(,)?) => {
         #[allow(dead_code)]

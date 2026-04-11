@@ -103,6 +103,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2300,6 +2311,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-runtime"
+version = "0.1.0-beta.2"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "log",
+ "normfs",
+ "prost",
+ "prost-build",
+ "serde",
+ "serde_yaml",
+ "station_iface",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2347,10 +2379,38 @@ dependencies = [
  "parking_lot",
  "prost",
  "prost-build",
+ "st3215-wire",
  "station_iface",
  "systime",
  "tokio",
  "tokio-serial",
+]
+
+[[package]]
+name = "st3215-compat-bridge"
+version = "0.1.0-beta.2"
+dependencies = [
+ "bytes",
+ "log",
+ "normfs",
+ "prost",
+ "serde",
+ "serde_yaml",
+ "sim-runtime",
+ "st3215",
+ "st3215-wire",
+ "station_iface",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "st3215-wire"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2388,10 +2448,14 @@ dependencies = [
  "prost",
  "prost-build",
  "rust-embed",
+ "sim-runtime",
  "st3215",
+ "st3215-compat-bridge",
+ "st3215-wire",
  "station_iface",
  "sysinfod",
  "systime",
+ "tempfile",
  "tokio",
  "usbvideo",
 ]

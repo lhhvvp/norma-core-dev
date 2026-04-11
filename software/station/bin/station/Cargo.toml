@@ -16,6 +16,8 @@ usbvideo = { path = "../../../drivers/usbvideo" }
 sysinfod = { path = "../../../drivers/sysinfod" }
 motors-mirroring = { path = "../../../drivers/motors-mirroring" }
 inferences = { path = "../../../drivers/inferences" }
+sim-runtime = { path = "../../../sim-runtime" }
+st3215-compat-bridge = { path = "../../../sim-bridges/st3215-compat-bridge" }
 log = { workspace = true }
 env_logger = "0.10"
 bytes = { workspace = true }
@@ -28,6 +30,14 @@ rust-embed = "8.9.0"
 mime_guess = "2.0.5"
 parking_lot = { workspace = true }
 dashmap = "6.1"
+
+[dev-dependencies]
+# `test-util` feature re-exports MockBackend + start_with_mock so
+# Chunk 8 Task 8.8's E2E test can drive the bridge end-to-end
+# without spawning a norma_sim subprocess.
+sim-runtime = { path = "../../../sim-runtime", features = ["test-util"] }
+st3215-wire = { path = "../../../drivers/st3215-wire" }
+tempfile = "3"
 
 [build-dependencies]
 prost-build = { workspace = true }

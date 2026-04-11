@@ -3,6 +3,9 @@ pub mod config;
 
 pub const COMMANDS_QUEUE_ID: &str = "commands";
 
+pub use config::{
+    Bridges, LogCapture, SimMode, SimRuntimeConfig, St3215CompatBridgeConfig,
+};
 pub use traits::*;
 
 pub mod iface_proto {

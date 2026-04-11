@@ -1,0 +1,29 @@
+[package]
+name = "st3215-compat-bridge"
+version.workspace = true
+edition = "2021"
+description = "Bidirectional bridge between legacy ST3215 queues and generic SimulationRuntime."
+
+[dependencies]
+tokio = { workspace = true }
+normfs = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+log = { workspace = true }
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+sim-runtime = { path = "../../sim-runtime" }
+st3215-wire = { path = "../../drivers/st3215-wire" }
+station_iface = { path = "../../station/shared/station-iface" }
+
+# Pulls in the entire real driver crate for the generated
+# `st3215::st3215_proto::Command` type used by command_task. The
+# alternative (extracting st3215_proto to its own crate) is out of
+# scope for MVP-1; see Chunk 7 Task 7.1 note.
+st3215 = { path = "../../drivers/st3215" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
