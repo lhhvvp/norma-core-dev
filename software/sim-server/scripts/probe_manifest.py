@@ -7,7 +7,7 @@ WorldDescriptor, and prints a readable summary.
 Usage:
   PYTHONPATH=software/sim-server python3 \\
     software/sim-server/scripts/probe_manifest.py \\
-    --manifest hardware/elrobot/simulation/worlds/elrobot_follower.scene.yaml
+    --manifest hardware/elrobot/simulation/elrobot_follower.scene.yaml
 """
 from __future__ import annotations
 

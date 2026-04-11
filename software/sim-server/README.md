@@ -27,7 +27,7 @@ PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/
 
 ```bash
 PYTHONPATH=software/sim-server python3 -m norma_sim \
-    --manifest hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml \
+    --manifest hardware/elrobot/simulation/elrobot_follower.scene.yaml \
     --socket /tmp/norma-sim-dev.sock \
     --physics-hz 500 \
     --publish-hz 100
