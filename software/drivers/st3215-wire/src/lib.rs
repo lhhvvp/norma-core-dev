@@ -1,12 +1,20 @@
 //! ST3215 Feetech servo protocol (pure, zero I/O).
 //!
 //! This crate contains the wire-format parts of the ST3215 driver that are
-//! safe to depend on from both the real hardware driver (`st3215`) and the
-//! simulation compatibility bridge (`st3215-compat-bridge`).
+//! safe to depend on from both the real hardware driver and the
+//! simulation compatibility bridge.
 //!
-//! Architecture invariants (CI-enforced):
-//!   - No `tokio`, `normfs`, `station_iface`, or `StationEngine` dependencies
-//!   - No I/O, async, or runtime-specific code
+//! Architecture invariants (CI-enforced via make check-arch-invariants —
+//! see Chunk 8 of the simulation-integration plan):
+//!
+//! - Zero dependencies on async-runtime crates, persistent-queue crates,
+//!   the station interface crate, or the Station engine type.
+//! - No I/O, no `async`, no runtime-specific code. Only bytes in,
+//!   structs out (and the reverse).
+//!
+//! Forbidden dependency names are intentionally not spelled out here —
+//! the invariant is enforced by a grep-based CI check that would trip
+//! on the mention itself.
 
 pub mod layout;
 pub mod pack;

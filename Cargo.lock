@@ -2347,6 +2347,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "prost-build",
+ "st3215-wire",
  "station_iface",
  "systime",
  "tokio",
