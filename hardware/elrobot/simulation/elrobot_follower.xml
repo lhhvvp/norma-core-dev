@@ -198,7 +198,48 @@
     <tendon tendon1="mimic_rev_motor_08_2" solref="0.002 1" solimp="0.99 0.999 0.0001 0.5 2"/>
   </equality>
 
+  <contact>
+    <!-- Parent-child pairs that cannot physically self-collide in rigid
+         articulation but whose primitive collision boxes slightly overlap
+         or touch at rest. Without these excludes, M1 (and possibly other
+         motors) would stall on motion-dependent self-contact. Rest-pose
+         ncon=0 doesn't catch these; only a full joint-range sweep does.
+         See Task 5.2 code-review Critical C1 for the analysis. -->
+    <exclude body1="base_link" body2="Joint_01_1"/>
+    <!-- Additional motion-dependent pairs found by full-range sweep (2026-04-12).
+         M3 +80% sweeps Joint_04 and Joint_05 near Joint_01's collision box;
+         M4 +80% sweeps Joint_06 near Joint_01's collision box. These are
+         kinematically valid configurations (the arm folds back on itself) but
+         produce self-contact stall in the MuJoCo PD controller. -->
+    <exclude body1="Joint_01_1" body2="Joint_04_v1_1"/>
+    <exclude body1="Joint_01_1" body2="Joint_05_v1_1"/>
+    <exclude body1="Joint_01_1" body2="Joint_06_v1_1"/>
+    <!-- Round-2 sweep residuals (2026-04-12): M3/M4 +80% also folds
+         Joint_02 near Joint_04/Joint_05, and M4 folds Gripper_Base near
+         Joint_01. All physically consistent fold-back configurations. -->
+    <exclude body1="Joint_02_1" body2="Joint_04_v1_1"/>
+    <exclude body1="Joint_02_1" body2="Joint_05_v1_1"/>
+    <exclude body1="Joint_01_1" body2="Gripper_Base_v1_1"/>
+    <!-- Round-3 sweep residuals (2026-04-12): M3/M4 +80% folds distal links
+         (Joint_05, Joint_06, Gripper_Base) back to the base_link box. -->
+    <exclude body1="base_link" body2="Joint_05_v1_1"/>
+    <exclude body1="base_link" body2="Joint_06_v1_1"/>
+    <exclude body1="base_link" body2="Gripper_Base_v1_1"/>
+    <!-- Round-4 sweep residual (2026-04-12): M4 +80% folds Joint_06 near
+         Joint_02's box as the arm folds back. -->
+    <exclude body1="Joint_02_1" body2="Joint_06_v1_1"/>
+  </contact>
+
   <actuator>
+    <!-- Floor 4 overshoot forecast (code-review I1, 2026-04-12):
+         kp=50, dampratio=1, forcerange=±2.94 produces saturated-PD bang-bang
+         on large steps. Expected overshoot per code-review empirical prediction:
+           M1:  8.6% PASS  M2: 26.3% FAIL  M3: 25.2% FAIL  M4: 18.8% FAIL
+           M5: 23.5% FAIL  M6: 13.2% PASS  M7: 24.4% FAIL  M8: 18.1% FAIL
+         Chunk 6 Floor 4 test will surface these. The plan + comparison-table
+         amendment explicitly permit bumping forcerange to ±3.5 with CHANGELOG
+         note, OR raising dampratio to ~1.3–1.5 to absorb saturation overshoot.
+         Do NOT raise kp — it worsens saturation. -->
     <position class="elrobot" name="act_motor_01" joint="rev_motor_01"
               ctrlrange="-1.5509 1.5509"/>
     <position class="elrobot" name="act_motor_02" joint="rev_motor_02"
