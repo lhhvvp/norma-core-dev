@@ -170,7 +170,7 @@ hardware/elrobot/simulation/
 │       ├── LICENSE                     # Menagerie 的 Apache 2.0 副本
 │       └── trs_so_arm100/
 │           ├── scene.xml              # Menagerie 原文件，未修改
-│           ├── trs_so_arm100.xml
+│           ├── so_arm100.xml
 │           └── assets/                # Menagerie 自己的 meshes
                                         # worlds/ 整个目录删除（见 §5.2）
 ```
@@ -216,13 +216,13 @@ software/station/bin/station/
 
 1. `git clone https://github.com/google-deepmind/mujoco_menagerie /tmp/menagerie`
 2. 确认存在 `trs_so_arm100/` 或等价目录
-3. 读 `trs_so_arm100/trs_so_arm100.xml` 和 `scene.xml`，确认：
+3. 读 `trs_so_arm100/so_arm100.xml` 和 `scene.xml`，确认：
    - MJCF 包含 `<default>` class、`<position>` actuator、tendon/equality（若有 gripper mimic）
    - joint 数量 **5 revolute + 1 gripper = 6 actuators**（confirmed 2026-04-11 via external research; 2025-06-09 tuning 已对齐真机）
    - `armature` / `damping` 属性存在且数值合理（非零）
    - mesh path 指向 `trs_so_arm100/assets/*.stl`（或类似）
 4. 检查 `LICENSE` 文件确认是 Apache 2.0（或其他 permissive license）
-5. **vendor 文件**到 `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/`，包含 scene.xml / trs_so_arm100.xml / assets/ / LICENSE
+5. **vendor 文件**到 `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/`，包含 scene.xml / so_arm100.xml / assets/ / LICENSE
 6. 写 `VENDOR.md` 记录：源 URL、clone commit SHA、日期、"未修改，仅作为参考"
 
 **Phase 0 Gate**：以上 6 步全通过才能进 spec review。若 (1)(2)(4) 不成立（没 SO-ARM100、license 不兼容），spec 废弃重写，换 fallback 方案（看 `gym-lowcostrobot` 或其他 Menagerie arm 如 `trossen`/`franka_panda`）。
@@ -262,7 +262,7 @@ software/station/bin/station/
 
 **步骤**：
 
-1. **通读 vendor 的 `trs_so_arm100.xml`**，产出 joint 映射表（§7）
+1. **通读 vendor 的 `so_arm100.xml`**，产出 joint 映射表（§7）
 2. **手写 `hardware/elrobot/simulation/elrobot_follower.xml`**：
    - 从 Menagerie 批发 `<option>` / `<default>` class / actuator 默认值
    - 用 ElRobot URDF 的 kinematics（pos / axis / mesh reference）构造 `<body>` 树
@@ -338,7 +338,7 @@ shoulder_pan / shoulder_lift / elbow / wrist_flex / wrist_roll / gripper
 1. **`<option>` 块**：`timestep` / `iterations` / `integrator` / `solver` 全部照搬
 2. **`<default>` 类继承**：Menagerie 的 class 定义（通常有 `arm_link` / `finger` / `visual` / `collision`）→ 沿用名字 + 属性
 3. **Collision geometry 简化策略**：visual 用 STL mesh，collision 用 primitive（解决 MVP-1 的自碰撞 bug）
-4. **Gripper tendon / equality 实现**：若 Menagerie 的 gripper 也用 tendon-based mimic → 沿用；若不同（e.g., `<weld>`）→ 保留 MVP-1 的 tendon 实现，不为对齐 Menagerie 破坏 P0
+4. **Gripper 实现**: confirmed 2026-04-11 — Menagerie's gripper is a plain single-DOF revolute joint + `<position>` actuator (name `Jaw`, axis `0 0 1`, range `-0.174 1.75`). **No tendon, no equality, no weld, no mimic.** ElRobot's 2-finger parallel gripper is mechanically different (needs 2 mimic joints); ElRobot's MJCF keeps MVP-1's `<tendon><fixed>` + `<equality><tendon>` structure independently of Menagerie. Do NOT try to align ElRobot's gripper to Menagerie's single-joint form — the hardware is different.
 5. **Actuator `<position>` 默认 `kp` / `kv`**：继承 Menagerie 的（在有 armature 前提下，他们的值才是 ground truth）
 
 ### 7.4 必须自己构造的东西

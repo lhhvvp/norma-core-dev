@@ -41,7 +41,7 @@
 - Create: `hardware/elrobot/simulation/vendor/menagerie/VENDOR.md`
 - Create: `hardware/elrobot/simulation/vendor/menagerie/LICENSE`
 - Create: `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml` (copied from Menagerie, unmodified)
-- Create: `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml` (copied from Menagerie, unmodified)
+- Create: `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/so_arm100.xml` (copied from Menagerie, unmodified)
 - Create: `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/assets/*` (copied from Menagerie, unmodified — exact file list depends on what trs_so_arm100 references)
 
 ---
@@ -66,20 +66,20 @@ Expected: clone succeeds, `/tmp/menagerie/` directory exists.
 ls /tmp/menagerie/trs_so_arm100/
 ```
 
-Expected output should contain at minimum: `scene.xml`, `trs_so_arm100.xml` (or equivalent top-level MJCF), and an `assets/` directory. Note exact file list for step 1.2.
+Expected output should contain at minimum: `scene.xml`, `so_arm100.xml` (or equivalent top-level MJCF), and an `assets/` directory. Note exact file list for step 1.2.
 
 **If the directory does not exist** or has different naming: STOP. Report to user and re-check spec §10 Risk "Menagerie 没有 SO-ARM100". Do NOT proceed to step 3.
 
 - [ ] **Step 3: Read scene.xml and note structure**
 
 Use the Read tool on `/tmp/menagerie/trs_so_arm100/scene.xml`. Note:
-- Does it use `<include>` to reference `trs_so_arm100.xml`?
+- Does it use `<include>` to reference `so_arm100.xml`?
 - Does it add worldbody elements (floor, lights)?
 - Record the file contents into a scratch note.
 
-- [ ] **Step 4: Read trs_so_arm100.xml and characterize joints**
+- [ ] **Step 4: Read so_arm100.xml and characterize joints**
 
-Use the Read tool on `/tmp/menagerie/trs_so_arm100/trs_so_arm100.xml`. Characterize:
+Use the Read tool on `/tmp/menagerie/trs_so_arm100/so_arm100.xml`. Characterize:
 - Number of `<joint>` elements (**expected: 5 revolute + 1 gripper = 6 actuators total**; verified against Menagerie CHANGELOG 2025-06-09 tuning as 5-DOF SO-100; see also upstream plan research notes)
 - Presence of `<default>` block with `<joint armature="..." damping="..."/>` (REQUIRED for spec viability)
 - Actuator type (expected: `<position>` for revolute + something for gripper)
@@ -226,7 +226,7 @@ To refresh vendored content from a newer Menagerie commit:
 find hardware/elrobot/simulation/vendor/menagerie -type f | sort
 ```
 
-Expected: at minimum `VENDOR.md`, `LICENSE`, `trs_so_arm100/scene.xml`, `trs_so_arm100/trs_so_arm100.xml`, plus whatever asset files Menagerie uses.
+Expected: at minimum `VENDOR.md`, `LICENSE`, `trs_so_arm100/scene.xml`, `trs_so_arm100/so_arm100.xml`, plus whatever asset files Menagerie uses.
 
 - [ ] **Step 6: Commit the vendor import**
 
@@ -276,10 +276,10 @@ In the viewer window:
 - Observe that the simulation is running (timer ticks in the status bar)
 - After several seconds, the arm should be stationary (gravity is balanced by holding torques)
 
-**If the arm falls apart or oscillates**: Menagerie's `trs_so_arm100` may have a broken scene. STOP and examine `scene.xml` — possibly the `<option>` block has been tweaked by recent Menagerie commits. Fallback: try loading `trs_so_arm100.xml` directly (without the scene wrapper):
+**If the arm falls apart or oscillates**: Menagerie's `trs_so_arm100` may have a broken scene. STOP and examine `scene.xml` — possibly the `<option>` block has been tweaked by recent Menagerie commits. Fallback: try loading `so_arm100.xml` directly (without the scene wrapper):
 
 ```bash
-python -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml
+python -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/so_arm100.xml
 ```
 
 - [ ] **Step 3: Manually drag a joint in the viewer (visual interactivity check)**
@@ -2678,19 +2678,15 @@ Expected: no matches.
 - [ ] **Step 1: Inspect Menagerie's gripper implementation**
 
 ```bash
-grep -n 'gripper\|finger\|tendon\|equality' hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml
+grep -n 'gripper\|finger\|tendon\|equality' hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/so_arm100.xml
 ```
 
-Record:
-- Does Menagerie have an actuator named `gripper` (or similar)? What type — `<position>`, `<general>`?
-- Is there a `<tendon><fixed>` + `<equality><tendon>` mimic structure like ElRobot's gripper?
-- What are the joint/ctrl ranges?
+**Confirmed by Chunk 1 Task 1.1 recon (2026-04-11)**:
+- Menagerie's gripper is a **plain single-DOF revolute joint** (axis `0 0 1`, range `-0.174 1.75`, name `Jaw`) driven by a vanilla `<position>` actuator. **No tendon, no equality, no weld, no mimic.** This is the simplest possible gripper — just another joint in the chain from MJCF's perspective.
+- All 6 actuators are `<position>` with `inheritrange="1"` pulling ctrlrange from joint range.
+- **No annotation is needed for Phase 1** — auto-synthesis of all 6 actuators as REVOLUTE_POSITION works out of the box. The web UI shows 6 sliders, one per joint (including gripper), and dragging the Jaw slider directly controls the MJCF `Jaw` position.
 
-If Menagerie's gripper is a plain `<position>` with no tendon (just a single prismatic finger joint), **no annotation is needed** — auto-synthesis as REVOLUTE_POSITION works fine for Phase 1 smoke. The web UI will show a slider that linearly controls the ctrl value.
-
-If Menagerie's gripper uses tendon-based mimic like ours, decide whether to annotate it as GRIPPER_PARALLEL for Phase 1 (better UX, normalized [0,1] range) or leave as auto-synthesized REVOLUTE_POSITION (easier, just works).
-
-**For Phase 1 purposes: prefer the simpler path (no annotation)** unless the gripper is visibly broken. Phase 1's goal is infra validation, not gripper UX.
+**Skip the "if gripper uses tendon mimic" speculation — it doesn't, confirmed.**
 
 - [ ] **Step 2: Write the scene yaml**
 
@@ -3159,7 +3155,7 @@ Task 4.5 must have a Y outcome. If N, STOP and debug before proceeding to Chunk 
 **Files:**
 - Create: `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md`
 
-**Rationale:** Before writing the MJCF, read Menagerie's `trs_so_arm100.xml` carefully and produce an explicit mapping from each ElRobot joint to its Menagerie analog (if any), recording the armature/damping/inertial values we plan to copy. This makes Chunk 5's subsequent MJCF work deterministic and auditable.
+**Rationale:** Before writing the MJCF, read Menagerie's `so_arm100.xml` carefully and produce an explicit mapping from each ElRobot joint to its Menagerie analog (if any), recording the armature/damping/inertial values we plan to copy. This makes Chunk 5's subsequent MJCF work deterministic and auditable.
 
 **Topology baseline (confirmed 2026-04-11 via external research):**
 
@@ -3169,9 +3165,9 @@ Task 4.5 must have a Y outcome. If N, STOP and debug before proceeding to Chunk 
 
 Chunk 1 Task 1.1 Step 7's reading of `lachlanhurst/so100-mujoco-sim` may have surfaced additional insights about how another project mapped ElRobot-family arms to Menagerie — incorporate those notes here if relevant.
 
-- [ ] **Step 1: Read Menagerie's trs_so_arm100.xml**
+- [ ] **Step 1: Read Menagerie's so_arm100.xml**
 
-Use the Read tool on `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml`. Identify:
+Use the Read tool on `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/so_arm100.xml`. Identify:
 - The `<default>` block with joint armature/damping defaults
 - Each joint's inertial properties (via parent body's `<inertial>` element)
 - The actuator section with kp/kv/forcerange defaults
@@ -3235,7 +3231,7 @@ Create `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md`:
    - Menagerie 有 classes: {list}
    - ElRobot 继承所有 classes 不修改
 3. **Actuator kp/kv/forcerange**: Menagerie 默认值作为 ElRobot 的 baseline. 若 Phase 2 smoke test 过不了 Floor 4 step response, 允许 per-joint 微调
-4. **Gripper mimic**: Menagerie 使用 {tendon / weld / 其它}. ElRobot 保留 MVP-1 的 `<tendon><fixed>` + `<equality><tendon>` 实现（P0 不可破）
+4. **Gripper mimic**: Menagerie uses a plain single-DOF revolute joint + `<position>` actuator (confirmed Chunk 1, no tendon / equality / weld). ElRobot's gripper is different — it keeps MVP-1's `<tendon><fixed>` + `<equality><tendon>` mimic structure (2 mimic joints, P0 不可破). **Do not try to match Menagerie's single-joint gripper for ElRobot — ElRobot's 2-finger parallel gripper mechanically needs the tendon mimic.**
 
 ## 独有关节的估值依据（3 个关节，非 2）
 
@@ -3281,7 +3277,7 @@ git commit -m "spec: MVP-2 Menagerie → ElRobot parameter comparison table"
 
 - [ ] **Step 1: Start from Menagerie's `<option>` + `<default>` as template**
 
-Copy Menagerie's `trs_so_arm100.xml` `<option>` and `<default>` blocks into the new file. Preserve the class hierarchy (`arm_link`, `visual`, `collision`, etc. — whatever Menagerie uses).
+Copy Menagerie's `so_arm100.xml` `<option>` and `<default>` blocks into the new file. Preserve the class hierarchy (`arm_link`, `visual`, `collision`, etc. — whatever Menagerie uses).
 
 - [ ] **Step 2: Construct the body tree from ElRobot URDF**
 
