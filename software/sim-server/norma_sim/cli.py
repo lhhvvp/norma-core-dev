@@ -1,15 +1,8 @@
-"""`python -m norma_sim --manifest <path> ...` entry point.
+"""`python -m norma_sim --manifest <path>` entry point.
 
-Wires together the world loader, scheduler, IpcServer and applier.
-The physics loop runs on a background thread and uses
-`loop.call_soon_threadsafe` to hand off WorldSnapshot broadcasts to
-the asyncio event loop where IpcServer lives.
-
-Shutdown paths:
-  - Ctrl+C (SIGINT) / SIGTERM → handler sets the stopping event,
-    scheduler exits, loop stops.
-  - Sim crash inside the scheduler thread → main loop sees the
-    thread is dead and exits.
+The `--manifest` flag accepts the MVP-2 `.scene.yaml` schema
+(see docs/superpowers/specs/2026-04-11-mvp2-menagerie-walking-skeleton-design.md
+section 8.1). MVP-1's `.world.yaml` schema is no longer supported.
 """
 from __future__ import annotations
 
@@ -40,7 +33,11 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--manifest",
         type=Path,
         required=True,
-        help="Path to world.yaml manifest",
+        help=(
+            "Path to the sim scene config yaml (MVP-2 .scene.yaml schema; "
+            "see spec 2026-04-11-mvp2-menagerie-walking-skeleton-design.md "
+            "section 8.1)."
+        ),
     )
     ap.add_argument(
         "--socket",

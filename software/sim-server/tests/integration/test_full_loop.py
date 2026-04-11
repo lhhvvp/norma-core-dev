@@ -48,7 +48,7 @@ async def _wait_for_socket(path: Path, timeout: float = 5.0) -> bool:
     return False
 
 
-async def _spawn_sim(socket_path: Path, world_yaml_path: Path) -> asyncio.subprocess.Process:
+async def _spawn_sim(socket_path: Path, scene_yaml_path: Path) -> asyncio.subprocess.Process:
     # Pass PYTHONPATH so the subprocess can import norma_sim. The
     # parent test run already has it set, but subprocess env has to
     # be constructed explicitly for asyncio.create_subprocess_exec.
@@ -70,7 +70,7 @@ async def _spawn_sim(socket_path: Path, world_yaml_path: Path) -> asyncio.subpro
         "-m",
         "norma_sim",
         "--manifest",
-        str(world_yaml_path),
+        str(scene_yaml_path),
         "--physics-hz",
         "500",
         "--publish-hz",
@@ -99,13 +99,13 @@ async def _handshake(reader, writer, role: str, client_id: str) -> "Envelope":
     return decode_envelope(await read_frame(reader))
 
 
-def test_full_loop(world_yaml_path, tmp_path):
+def test_full_loop(elrobot_scene_yaml, tmp_path):
     """Launch norma_sim as a subprocess; handshake; send an
     actuation; receive at least one snapshot; terminate cleanly."""
 
     async def _inner():
         socket_path = tmp_path / "sim.sock"
-        proc = await _spawn_sim(socket_path, world_yaml_path)
+        proc = await _spawn_sim(socket_path, elrobot_scene_yaml)
         try:
             assert await _wait_for_socket(socket_path, timeout=5.0), (
                 "sim server did not bind socket within 5s; "
@@ -116,7 +116,7 @@ def test_full_loop(world_yaml_path, tmp_path):
             welcome = await _handshake(reader, writer, "full-loop", "c1")
             assert welcome.welcome is not None
             assert welcome.welcome.world is not None
-            assert welcome.welcome.world.world_name == "elrobot_follower_empty"
+            assert welcome.welcome.world.world_name == "elrobot_follower"
 
             # Send an actuation batch.
             await write_frame(
@@ -168,13 +168,13 @@ def test_full_loop(world_yaml_path, tmp_path):
     _run(_inner())
 
 
-def test_multi_client_fan_out(world_yaml_path, tmp_path):
+def test_multi_client_fan_out(menagerie_scene_yaml, tmp_path):
     """★★ Two clients connect to the same sim subprocess; both
     receive snapshots from the same publish cycle."""
 
     async def _inner():
         socket_path = tmp_path / "sim.sock"
-        proc = await _spawn_sim(socket_path, world_yaml_path)
+        proc = await _spawn_sim(socket_path, menagerie_scene_yaml)
         try:
             assert await _wait_for_socket(socket_path, timeout=5.0)
 
@@ -225,13 +225,13 @@ def test_multi_client_fan_out(world_yaml_path, tmp_path):
     _run(_inner())
 
 
-def test_subprocess_clean_shutdown(world_yaml_path, tmp_path):
+def test_subprocess_clean_shutdown(menagerie_scene_yaml, tmp_path):
     """SIGTERM should make the subprocess exit within a reasonable
     window without leaving the socket file behind."""
 
     async def _inner():
         socket_path = tmp_path / "sim.sock"
-        proc = await _spawn_sim(socket_path, world_yaml_path)
+        proc = await _spawn_sim(socket_path, menagerie_scene_yaml)
         try:
             assert await _wait_for_socket(socket_path, timeout=5.0)
         finally:
