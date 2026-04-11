@@ -33,79 +33,115 @@ PYTHONPATH=software/sim-server python3 -m norma_sim \
     --publish-hz 100
 ```
 
-## Scenario A smoke-test checklist (manual)
+## Manual browser smoke test (MVP-2)
 
-The full end-to-end acceptance for Chunk 8's P0 demo. Run from the repo
-root after all Rust + Python artifacts are built.
+MVP-2 has two complementary smoke tests. Both run from the repo root
+after Rust + Python artifacts are built.
 
-1. **Prerequisites**
-   - `rustup stable` toolchain installed + `cargo` on PATH
-   - `nasm` + `clang` (for `turbojpeg-sys` + `norm-uvc-sys` bindgen)
-   - `python3 -c "import mujoco, numpy, yaml, pytest"` all succeed
-   - `software/station/clients/station-viewer/dist/` exists
-     (`cd software/station/clients/station-viewer && yarn install &&
-     yarn build` if absent)
+### Prerequisites
 
-2. **Generated artifacts**
-   ```bash
-   make protobuf           # regenerates all proto bindings
-   make regen-mjcf         # regenerates elrobot_follower.xml
-   ```
-   Both must exit 0.
+- `rustup stable` toolchain + `cargo` on PATH
+- `nasm` + `clang` 18+ (for `turbojpeg-sys` + `norm-uvc-sys` bindgen)
+- `python3 -c "import mujoco, numpy, yaml, pytest"` all succeed
+- `software/station/clients/station-viewer/dist/` exists
+  (`cd software/station/clients/station-viewer && yarn install && yarn build`
+  if absent — required for `rust-embed`'s `Asset::get` to compile)
+- `cargo build -p station` succeeds
 
-3. **Build**
-   ```bash
-   cargo build -p station
-   ```
-   Must compile cleanly. Warnings OK.
+### Phase 1 baseline — Menagerie walking skeleton
 
-4. **Launch Scenario A**
-   ```bash
-   ./target/debug/station -c software/station/bin/station/station-sim.yaml
-   ```
-   Expected log lines on stderr:
-   ```
-   Starting sim-runtime (mode=Internal, startup_timeout_ms=5000)
-   sim-runtime started: elrobot_follower_empty
-   Drivers started
-   st3215_compat bridge started
-   ```
+Validates that the station infrastructure works with any MuJoCo-valid
+MJCF (hypothesis A: "infra is robot-agnostic"). Run periodically after
+any change to station / sim-runtime / bridge code — it is the permanent
+regression fixture for assumption A.
 
-5. **Web UI**
-   - Open `http://localhost:8889` in a browser
-   - ElRobot follower 3D model loads
-   - The model renders in a neutral pose (all joints at 0)
+```bash
+PYTHONPATH=software/sim-server ./target/debug/station \
+    -c software/station/bin/station/station-sim-menagerie.yaml \
+    --web 0.0.0.0:8889
+```
 
-6. **★ P0 gripper demo**
-   - Drag the "Motor 1" slider → Joint_01 rotates in the 3D view
-   - Drag the "Motor 8" (Gripper) slider →
-     Gripper_Jaw_01 and Gripper_Jaw_02 **open/close** via the MJCF
-     tendon-based `<equality>` polycoef constraints from Chunk 1
-     (commit `a76b2fe`)
+**⚠ `PYTHONPATH` is load-bearing.** Without it, the `python3 -m norma_sim`
+subprocess silently fails to find its module and station hangs at
+`"Starting sim-runtime (mode=Internal, startup_timeout_ms=5000)"` with
+no error message — the 5s handshake just times out.
 
-7. **Clean shutdown**
-   - Ctrl+C in the Station terminal
-   - Expected final log: `norma_sim shut down cleanly`
-   - `ls /tmp/norma-sim*` → no matches (TempRuntimeDir was cleaned up)
+- [ ] Browser at `http://localhost:8889` shows Menagerie SO-ARM100's
+  **6 motors** (Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw)
+- [ ] Dragging any slider smoothly rotates the corresponding joint in 3D
+- [ ] `pytest software/sim-server/tests/integration/test_menagerie_walking_skeleton.py`
+  passes (6 tests)
 
-If any step fails, see the chunk-specific troubleshooting notes below.
+### Phase 2 — ElRobot full 8-motor demo
+
+The MVP-2 exit criterion. Validates that ElRobot's sim env is usable for
+future policy training (spec §3.2 Ceiling).
+
+```bash
+PYTHONPATH=software/sim-server ./target/debug/station \
+    -c software/station/bin/station/station-sim.yaml \
+    --web 0.0.0.0:8889
+```
+
+Expected startup log lines:
+
+```
+Starting sim-runtime (mode=Internal, startup_timeout_ms=5000)
+sim-runtime started: elrobot_follower
+st3215_compat_bridge bridge started: robot_id=elrobot_follower legacy_bus_serial=sim://bus0 motors=8
+WebSocket server listening on 0.0.0.0:8889
+```
+
+- [ ] Browser connects, shows 8 motors (M1-M8) populated on `sim://bus0`
+- [ ] Switch control source dropdown → **(Web-controlled)**
+- [ ] Drag **M1 (Shoulder Pitch)** slowly through full range
+  - smooth response, no oscillation, no jitter
+  - arm holds position when slider released (no droop)
+  - this was the MVP-1 regression — Phase 2's Menagerie physics fork fixes it
+- [ ] Repeat for M2 (Shoulder Roll), M3 (Shoulder Yaw), M4 (Elbow)
+- [ ] Repeat for M5 (Wrist Roll), M6 (Wrist Pitch), M7 (Wrist Yaw)
+- [ ] Drag **M8 (Gripper)** slider 0 → 1 → 0
+  - primary joint + both mimic jaws (`rev_motor_08_1`, `rev_motor_08_2`)
+    open/close in sync via the `<tendon>` + `<equality>` block (P0 invariant)
+  - no NaN artifacts (jaws don't disappear or fly apart)
+- [ ] Multi-motor test: drag M1 + M4 + M8 simultaneously, no interference
+- [ ] Kill station (Ctrl+C), restart, verify arm returns to home pose
+
+### Side-by-side visual comparison (Ceiling §3.2 item 8, advisory)
+
+In separate terminals:
+
+```bash
+python3 -m mujoco.viewer hardware/elrobot/simulation/elrobot_follower.xml
+python3 -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml
+```
+
+- [ ] ElRobot response quality ≈ Menagerie SO-ARM100 quality
+  (no obvious "ours is worse" artifacts — no extra jitter, no weird
+  motions, no obviously-wrong physics)
+
+If ElRobot looks materially worse, record the discrepancy but do not
+block — Floor §3.1 acceptance tests
+(`pytest software/sim-server/tests/integration/test_elrobot_acceptance.py`)
+are the hard gate for MVP-2.
 
 ### Troubleshooting
 
-- **Step 3 fails with "station-viewer/dist does not exist"** → run
-  step 1's `yarn install && yarn build`.
-- **Step 4 fails with "socket did not appear within 5000ms"** → the
-  Python subprocess crashed during startup. Look for the
-  `sim-backend.log` the config's `log-capture: File` creates, or
-  re-run with `--log-capture inherit` to see stderr live.
-- **Step 5 web UI shows "no connection"** → Station's web server is
-  on 8889 by default but the CLI flag `--web` must be passed; check
-  `station --help`.
-- **Step 6 gripper sliders move but the jaws don't** → regression on
-  the tendon equality; run the pytest P0 demo
+- **Station hangs at `"Starting sim-runtime"` with no further output** →
+  `PYTHONPATH=software/sim-server` not set. The `python3 -m norma_sim`
+  subprocess can't find its module and fails silently; station waits out
+  the 5s startup handshake then exits.
+- **`cargo build -p station` fails with `Asset::get not found`** →
+  `software/station/clients/station-viewer/dist/` missing. Run
+  `cd software/station/clients/station-viewer && yarn install && yarn build`.
+- **Web UI shows "connect a robot" empty state** → bridge's
+  `register_queue` not firing (MVP-1 regression guard — commit `84ca47a`).
+  Check station logs for `st3215_compat_bridge bridge started`.
+- **Gripper sliders move but the jaws don't** → tendon equality regression
+  on the P0 gripper mimic. Run
   `pytest software/sim-server/tests/world/test_mimic_gripper.py -v`
-  and investigate the `<tendon>` + `<equality>` blocks in
-  `hardware/elrobot/simulation/elrobot_follower.xml` if it fails.
+  and inspect the `<tendon>` + `<equality>` blocks in
+  `hardware/elrobot/simulation/elrobot_follower.xml`.
 
 ## Architecture
 
