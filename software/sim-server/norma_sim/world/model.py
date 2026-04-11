@@ -14,22 +14,14 @@ from typing import Optional
 
 import mujoco
 
-from .manifest import ActuatorManifest, WorldManifest, verify_source_hash
+from .manifest import ActuatorManifest, WorldManifest
 
 
 class MuJoCoWorld:
     """MjModel/MjData container with manifest-driven lookups."""
 
-    def __init__(self, manifest: WorldManifest, verify_hash: bool = True) -> None:
+    def __init__(self, manifest: WorldManifest) -> None:
         self.manifest = manifest
-        if verify_hash:
-            # Re-derive the manifest yaml path by walking up from the
-            # resolved urdf_path. The manifest's urdf_path is absolute
-            # after load_manifest, but we need the yaml location for
-            # sha256 input. Callers supply the manifest file path via
-            # the `from_manifest_path` helper below when they want
-            # hash verification.
-            pass
         self.model = mujoco.MjModel.from_xml_path(str(manifest.mjcf_path))
         self.data = mujoco.MjData(self.model)
         self.lock = threading.Lock()
@@ -38,18 +30,13 @@ class MuJoCoWorld:
         self._build_lookups()
 
     @classmethod
-    def from_manifest_path(cls, manifest_path, verify_hash: bool = True) -> "MuJoCoWorld":
-        """Canonical constructor that loads + verifies + instantiates.
-        Using this instead of ``MuJoCoWorld(manifest)`` guarantees the
-        source-hash check runs against the same yaml the client
-        actually passed on the command line.
-        """
+    def from_manifest_path(cls, manifest_path) -> "MuJoCoWorld":
+        """Canonical constructor: load the scene yaml, open the MJCF it
+        references, build manifest + MuJoCo model in one call."""
         from .manifest import load_manifest
 
         manifest = load_manifest(manifest_path)
-        if verify_hash:
-            verify_source_hash(manifest_path, manifest.mjcf_path)
-        return cls(manifest, verify_hash=False)
+        return cls(manifest)
 
     def _build_lookups(self) -> None:
         for robot in self.manifest.robots:

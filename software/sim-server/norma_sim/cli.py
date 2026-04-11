@@ -29,7 +29,7 @@ from .logging_setup import configure_logging
 from .scheduler.realtime import RealTimeScheduler
 from .world.actuation import ActuationApplier
 from .world.descriptor import build_world_descriptor
-from .world.manifest import load_manifest, verify_source_hash
+from .world.manifest import load_manifest
 from .world.model import MuJoCoWorld
 from .world.snapshot import SnapshotBuilder
 
@@ -67,7 +67,6 @@ async def _async_main(args: argparse.Namespace) -> int:
     assert socket_path is not None
 
     manifest = load_manifest(args.manifest)
-    verify_source_hash(args.manifest, manifest.mjcf_path)
     log.info(
         "manifest loaded",
         extra={
@@ -79,7 +78,7 @@ async def _async_main(args: argparse.Namespace) -> int:
         },
     )
 
-    world = MuJoCoWorld(manifest, verify_hash=False)
+    world = MuJoCoWorld(manifest)
     descriptor = build_world_descriptor(
         manifest, publish_hz=args.publish_hz, physics_hz=args.physics_hz
     )

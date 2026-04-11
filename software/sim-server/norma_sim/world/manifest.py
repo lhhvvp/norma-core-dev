@@ -1,16 +1,10 @@
-"""World manifest loader + source_hash verification.
+"""World manifest loader.
 
 Parses `hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml`
-(produced and edited by humans) into an immutable dataclass tree and
-verifies that the generated MJCF's embedded `source_hash=sha256:...`
-comment matches `sha256(urdf_bytes + manifest_bytes)`. A mismatch
-means the manifest/URDF were edited but `make regen-mjcf` was not
-re-run; the caller should fail fast with an actionable error.
+(produced and edited by humans) into an immutable dataclass tree.
 """
 from __future__ import annotations
 
-import hashlib
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -176,38 +170,3 @@ def _parse_sensor(raw: dict[str, Any]) -> SensorManifest:
         capability_kind=raw["capability"]["kind"],
         source=raw.get("source"),
     )
-
-
-# --------------------------------------------------------------------------
-# source_hash verification
-# --------------------------------------------------------------------------
-
-
-def verify_source_hash(manifest_path: Path, mjcf_path: Path) -> None:
-    """Raise ValueError if the MJCF's embedded source_hash doesn't
-    match sha256(urdf_bytes + manifest_bytes). Matches the hash
-    written by `hardware/elrobot/simulation/worlds/gen.py`.
-    """
-    with manifest_path.open() as f:
-        raw = yaml.safe_load(f)
-    manifest_dir = manifest_path.parent
-    urdf_path = (manifest_dir / raw["urdf_source"]).resolve()
-
-    urdf_bytes = urdf_path.read_bytes()
-    manifest_bytes = manifest_path.read_bytes()
-    expected = hashlib.sha256(urdf_bytes + manifest_bytes).hexdigest()
-
-    mjcf_text = mjcf_path.read_text()
-    m = re.search(r"source_hash=sha256:([0-9a-f]{64})", mjcf_text)
-    if m is None:
-        raise ValueError(
-            f"MJCF at {mjcf_path} has no source_hash comment. "
-            f"Run 'make regen-mjcf'."
-        )
-    found = m.group(1)
-    if found != expected:
-        raise ValueError(
-            f"MJCF source_hash mismatch. Run 'make regen-mjcf'.\n"
-            f"  expected: sha256:{expected[:16]}...\n"
-            f"  found:    sha256:{found[:16]}..."
-        )
