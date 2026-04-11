@@ -375,7 +375,7 @@ new `conftest.py` provides with an updated path.
 
 ### 4.3 New files
 
-Seven new files are created at the paths below.
+Nine new files are created at the paths below.
 
 #### 4.3.1 `mujoco/elrobot_follower/VERSION`
 
