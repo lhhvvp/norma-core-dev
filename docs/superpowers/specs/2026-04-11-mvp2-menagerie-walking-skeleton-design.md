@@ -189,7 +189,7 @@ hardware/elrobot/simulation/worlds/elrobot_follower.xml        # 迁移到 simul
 
 ```
 hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml
-software/sim-bridges/st3215-compat-bridge/src/menagerie_so_arm100.preset.yaml
+software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml
 software/station/bin/station/station-sim-menagerie.yaml
 software/sim-server/tests/integration/test_menagerie_walking_skeleton.py
 ```
@@ -236,8 +236,8 @@ software/station/bin/station/
 **步骤**（每步对应一个 implementation task，写进 plan 时拆成小 chunk）：
 
 1. **写 `menagerie_so_arm100.scene.yaml`**：新 schema（§8.1），`mjcf_path` 指向 vendor 的 `scene.xml`，`actuator_annotations` 声明 Menagerie 的 gripper（若有）
-2. **写 `menagerie_so_arm100.preset.yaml`**（`st3215-compat-bridge` 的 preset）：把 Menagerie 的 joint 名（`shoulder_pan_joint` 等）映射到 fake `motor_id = 1..N`、`actuator_id = rev_motor_01..N`（逻辑映射，不改 bridge 代码）
-3. **写 `station-sim-menagerie.yaml`**：station 的 sim scenario yaml，`sim_runtime` 节点的 `world_manifest` 指向 `menagerie_so_arm100.scene.yaml`，`st3215_compat_bridge` 节点的 `preset` 指向 `menagerie_so_arm100.preset.yaml`
+2. **写 `presets/menagerie-so-arm100.yaml`**（`st3215-compat-bridge` 的 preset）：把 Menagerie 的 joint 名（`shoulder_pan_joint` 等）映射到 fake `motor_id = 1..N`、`actuator_id = rev_motor_01..N`（逻辑映射，不改 bridge 代码）
+3. **写 `station-sim-menagerie.yaml`**：station 的 sim scenario yaml，`sim_runtime` 节点的 `world_manifest` 指向 `menagerie_so_arm100.scene.yaml`，`st3215_compat_bridge` 节点的 `preset` 指向 `presets/menagerie-so-arm100.yaml`
 4. **改 `norma_sim.world.manifest` + `descriptor`**：接受新 schema，actuator 列表从 MJCF 推断而非 yaml 读（§8.2）
 5. **跑 `python -m mujoco.viewer` 验证 Menagerie 原生可加载**（视觉基线）
 6. **跑 `./target/debug/station -c station-sim-menagerie.yaml --web 0.0.0.0:8889`**
@@ -438,7 +438,7 @@ software/station/shared/station-iface/*        (14 tests, 不动)
 software/station/bin/station/*                 (lib + 2 integration, 不动)
 ```
 
-**注 \***：`st3215-compat-bridge` 的代码不动，但**新增 preset yaml**（`menagerie_so_arm100.preset.yaml`）。preset 是数据文件不是代码。
+**注 \***：`st3215-compat-bridge` 的代码不动，但**新增 preset yaml**（`presets/menagerie-so-arm100.yaml`）。preset 是数据文件不是代码。
 
 ---
 
@@ -595,7 +595,7 @@ sim-test: check-arch-invariants
 - [ ] Phase 0 reconnaissance gate 通过（§6.1）
 - [ ] vendor Menagerie 到 `hardware/elrobot/simulation/vendor/menagerie/` + VENDOR.md + LICENSE
 - [ ] `menagerie_so_arm100.scene.yaml` 写完
-- [ ] `menagerie_so_arm100.preset.yaml` 写完
+- [ ] `presets/menagerie-so-arm100.yaml` 写完
 - [ ] `station-sim-menagerie.yaml` 写完
 - [ ] `norma_sim.world.manifest` / `descriptor` / `capabilities` 适配新 schema
 - [ ] Phase 1 smoke test：Menagerie 在浏览器里跑通

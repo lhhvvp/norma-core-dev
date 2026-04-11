@@ -2621,3 +2621,1596 @@ Expected: no matches.
 ---
 
 **Next:** Chunk 4 writes the Menagerie walking skeleton configs (scene yaml + bridge preset + station yaml) and the walking skeleton integration test.
+
+---
+
+## Chunk 4: Phase 1 — Walking skeleton configs + integration test
+
+**Purpose:** Run Menagerie SO-ARM100 verbatim through MVP-1's full stack (station + sim-runtime + norma_sim + bridge + web UI). This proves hypothesis A ("infra is robot-agnostic"). Produces a permanent regression fixture `test_menagerie_walking_skeleton.py` that stays green after Chunks 5-7 land ElRobot.
+
+**Gate:** `test_menagerie_walking_skeleton.py` passes. Manual browser smoke test against `station-sim-menagerie.yaml` shows Menagerie's N motors as draggable sliders. `cargo test -p sim-runtime -p st3215-wire -p st3215-compat-bridge` unchanged (zero Rust touched). `make check-arch-invariants` still passes.
+
+**Prerequisites:** Chunks 1-3 complete.
+
+**Files touched:**
+- Create: `hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml`
+- Create: `software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml`
+- Create: `software/station/bin/station/station-sim-menagerie.yaml`
+- Create: `software/sim-server/tests/integration/test_menagerie_walking_skeleton.py`
+- Unchanged: all Rust source files (bridge preset is data, not code)
+
+---
+
+### Task 4.1: Write `menagerie_so_arm100.scene.yaml`
+
+**Files:**
+- Create: `hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml`
+
+**Rationale:** Phase 1's scene yaml is minimal: it points at the vendored Menagerie MJCF, lets `<option>` come from MJCF directly (no overrides), and annotates the gripper only if Menagerie's gripper needs GRIPPER_PARALLEL treatment. At plan-write time we don't know Menagerie's exact gripper topology — this task includes a research step to decide.
+
+- [ ] **Step 1: Inspect Menagerie's gripper implementation**
+
+```bash
+grep -n 'gripper\|finger\|tendon\|equality' hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml
+```
+
+Record:
+- Does Menagerie have an actuator named `gripper` (or similar)? What type — `<position>`, `<general>`?
+- Is there a `<tendon><fixed>` + `<equality><tendon>` mimic structure like ElRobot's gripper?
+- What are the joint/ctrl ranges?
+
+If Menagerie's gripper is a plain `<position>` with no tendon (just a single prismatic finger joint), **no annotation is needed** — auto-synthesis as REVOLUTE_POSITION works fine for Phase 1 smoke. The web UI will show a slider that linearly controls the ctrl value.
+
+If Menagerie's gripper uses tendon-based mimic like ours, decide whether to annotate it as GRIPPER_PARALLEL for Phase 1 (better UX, normalized [0,1] range) or leave as auto-synthesized REVOLUTE_POSITION (easier, just works).
+
+**For Phase 1 purposes: prefer the simpler path (no annotation)** unless the gripper is visibly broken. Phase 1's goal is infra validation, not gripper UX.
+
+- [ ] **Step 2: Write the scene yaml**
+
+Create `hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml`:
+
+```yaml
+# MVP-2 Phase 1 — walking skeleton scene config for Menagerie trs_so_arm100.
+#
+# This yaml runs Menagerie's SO-ARM100 MJCF (vendored in Chunk 1, unmodified)
+# through MVP-1's full station stack. Its purpose is to verify that our
+# Rust/IPC/bridge infrastructure is robot-agnostic — it accepts any
+# MuJoCo-valid MJCF with any actuator topology.
+#
+# This file is a PERMANENT REGRESSION FIXTURE: it stays in the repo after
+# Phase 2 lands the ElRobot MJCF, as the baseline for assumption A ("infra
+# is robot-agnostic"). If something in sim-runtime / norma_sim regresses
+# and only ElRobot breaks, this scene yaml + test_menagerie_walking_skeleton.py
+# prove the infra is still sound and the problem is ElRobot-specific.
+
+world_name: menagerie_trs_so_arm100
+mjcf_path: ./vendor/menagerie/trs_so_arm100/scene.xml
+# No scene_overrides — Menagerie's <option> block is authoritative.
+# No scene_extras — Menagerie's scene.xml already has lights + floor.
+# No actuator_annotations — auto-synthesize all <position> actuators as
+# REVOLUTE_POSITION. If Phase 1 smoke test reveals that Menagerie's
+# gripper needs GRIPPER_PARALLEL semantics for usable UX, add an
+# annotation here; otherwise leave minimal.
+```
+
+- [ ] **Step 3: Smoke test loader**
+
+```bash
+PYTHONPATH=software/sim-server python3 -c "
+from norma_sim.world.manifest import load_manifest
+from pathlib import Path
+m = load_manifest(Path('hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml'))
+print(f'world_name={m.world_name}')
+print(f'mjcf_path={m.mjcf_path}')
+print(f'n_actuators={sum(len(r.actuators) for r in m.robots)}')
+for r in m.robots:
+    for a in r.actuators:
+        print(f'  {a.actuator_id:<30} kind={a.capability.kind}')
+"
+```
+
+Expected: loads successfully, prints actuators with kind=REVOLUTE_POSITION (and potentially one GRIPPER_PARALLEL if annotated).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml
+git commit -m "mvp2: add Menagerie walking skeleton scene.yaml"
+```
+
+---
+
+### Task 4.2: Write `menagerie-so-arm100.yaml` preset for st3215-compat-bridge
+
+**Files:**
+- Create: `software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml`
+
+**Rationale:** The `st3215-compat-bridge` uses a preset yaml to map `actuator_id` (from snapshots) to fake ST3215 `motor_id` (for the web UI's ST3215 slider viewer). The existing `elrobot.preset.yaml` maps `rev_motor_01..08` to motor_id 1..8. For Phase 1, we need a preset that maps Menagerie's actuator_ids to fake motor_ids so the web UI can show sliders for them.
+
+Because Phase 1's scene yaml does NOT list actuator_annotations (auto-synthesis mode), the `actuator_id` values are derived from Menagerie's `mjcf_actuator` names (e.g., `shoulder_pan`, `shoulder_lift`, `elbow`, ...). The preset needs to know those names.
+
+- [ ] **Step 1: Enumerate Menagerie's actuator_ids**
+
+Use the smoke test output from Task 4.1 Step 3. Record the actuator_ids Menagerie exposes (likely something like `shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_flex`, `wrist_roll`, `gripper`).
+
+- [ ] **Step 2: Inspect the existing `elrobot.preset.yaml` format**
+
+```bash
+cat software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml
+```
+
+Record the schema — it's the template for the Menagerie preset.
+
+- [ ] **Step 3: Write the Menagerie preset**
+
+Create `software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml` following the same schema as the existing `elrobot-follower.yaml`. Substitute Menagerie's actuator names for `rev_motor_01..08`, and assign motor_id 1..N where N is Menagerie's actuator count. Example (substitute real names from Task 4.1):
+
+```yaml
+# MVP-2 Phase 1 — ST3215 compat bridge preset for Menagerie trs_so_arm100.
+# Maps Menagerie's actuator names (auto-synthesized from MJCF) to fake
+# ST3215 motor_ids so the web UI's slider viewer can display them.
+#
+# This preset is a PERMANENT REGRESSION FIXTURE alongside
+# menagerie_so_arm100.scene.yaml. Do not delete when Phase 2 ships.
+
+robot_id: default_robot
+legacy_bus_serial: "sim://menagerie-so-arm100"
+motors:
+  - actuator_id: shoulder_pan        # ← replace with Menagerie's actual name
+    motor_id: 1
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+  - actuator_id: shoulder_lift
+    motor_id: 2
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+  # ... repeat for every actuator Menagerie exposes
+```
+
+**Important:** `robot_id: default_robot` matches `DEFAULT_ROBOT_ID` from Chunk 2 Task 2.5 (because Menagerie's scene yaml doesn't set an explicit `robot_id`). Do NOT use `elrobot_follower` here — that'd cause bridge commands to reference the wrong robot.
+
+- [ ] **Step 4: Validate preset loads via bridge preset loader**
+
+```bash
+cargo test -p st3215-compat-bridge preset_loader 2>&1 | tail -20
+```
+
+Expected: existing bridge preset tests pass. The new Menagerie preset file doesn't have a dedicated test yet (that's Task 4.4's walking skeleton test).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml
+git commit -m "st3215-compat-bridge: add Menagerie walking skeleton preset"
+```
+
+---
+
+### Task 4.3: Write `station-sim-menagerie.yaml`
+
+**Files:**
+- Create: `software/station/bin/station/station-sim-menagerie.yaml`
+
+**Rationale:** Station's sim scenario yaml ties together `sim_runtime` (pointing at the scene yaml) + `st3215_compat_bridge` (pointing at the preset yaml). MVP-1's `station-sim.yaml` does this for ElRobot; we add a parallel file for Menagerie.
+
+- [ ] **Step 1: Read the existing `station-sim.yaml` as template**
+
+```bash
+cat software/station/bin/station/station-sim.yaml
+```
+
+Record the structure — it's the template.
+
+- [ ] **Step 2: Write `station-sim-menagerie.yaml`**
+
+Create `software/station/bin/station/station-sim-menagerie.yaml` following the same structure as `station-sim.yaml`, but change:
+- Any `world_manifest:` / `scene_yaml:` path → points at `hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml`
+- Any `preset:` path for the bridge → points at `software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml`
+- Any `legacy_bus_serial:` → `"sim://menagerie-so-arm100"` to match the preset's bus_serial
+- Any `robot_id:` → `default_robot` to match Menagerie's DEFAULT_ROBOT_ID
+
+Add a header comment explaining this is the Phase 1 walking skeleton scenario and is a permanent regression fixture.
+
+- [ ] **Step 3: Validate yaml parses via station config validator**
+
+```bash
+cargo test -p station_iface test_config_validate 2>&1 | tail -10
+```
+
+Expected: existing station_iface validation tests pass. The new yaml isn't loaded by any test yet.
+
+Alternatively, have station itself parse the file:
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim-menagerie.yaml --validate-only 2>&1 || true
+```
+
+(if `--validate-only` exists; otherwise skip this step and rely on Task 4.5's runtime check.)
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add software/station/bin/station/station-sim-menagerie.yaml
+git commit -m "station: add Menagerie walking skeleton scenario yaml"
+```
+
+---
+
+### Task 4.4: Write `test_menagerie_walking_skeleton.py`
+
+**Files:**
+- Create: `software/sim-server/tests/integration/test_menagerie_walking_skeleton.py`
+
+**Rationale:** This is the **permanent regression fixture** for assumption A. It runs Menagerie through norma_sim's Python stack (bypassing the Rust bridge for speed) and verifies: (1) MJCF loads via new schema, (2) `mj_forward` has no self-collisions, (3) every actuator can be driven and the result reaches `data.ctrl`, (4) 10000 random-ctrl steps produce no NaN. Not a full stack test — that's the manual smoke in Task 4.5.
+
+- [ ] **Step 1: Write the test file**
+
+Create `software/sim-server/tests/integration/test_menagerie_walking_skeleton.py`:
+
+```python
+"""Walking skeleton: prove norma_sim infra works with Menagerie SO-ARM100
+verbatim. Baseline for assumption A ("infra is robot-agnostic").
+
+MUST remain green indefinitely — if this file breaks, infra has regressed
+even if ElRobot still works. The Menagerie MJCF is vendored unmodified,
+so any change here is a signal that the change was to norma_sim, not to
+ElRobot."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+try:
+    import mujoco
+    from norma_sim.world.manifest import load_manifest
+    from norma_sim.world.model import MuJoCoWorld
+    _OK = True
+    _ERR = ""
+except Exception as e:  # pragma: no cover
+    _OK = False
+    _ERR = str(e)
+
+
+pytestmark = pytest.mark.skipif(not _OK, reason=f"imports not OK: {_ERR}")
+
+
+@pytest.fixture
+def menagerie_walking_skeleton_yaml() -> Path:
+    here = Path(__file__).resolve()
+    # parents: [0]=tests/integration, [1]=tests, [2]=sim-server, [3]=software, [4]=repo
+    repo_root = here.parents[4]
+    p = repo_root / "hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml"
+    if not p.exists():
+        pytest.skip(
+            f"Menagerie scene yaml not found at {p}; run Chunk 4 Task 4.1 first"
+        )
+    return p
+
+
+def test_menagerie_scene_yaml_loads(menagerie_walking_skeleton_yaml: Path):
+    """The scene yaml parses, the referenced MJCF exists, and load_manifest
+    produces a non-empty actuator list."""
+    manifest = load_manifest(menagerie_walking_skeleton_yaml)
+    assert manifest.world_name == "menagerie_trs_so_arm100"
+    assert manifest.mjcf_path.exists()
+    assert len(manifest.robots) == 1
+    assert len(manifest.robots[0].actuators) >= 5
+
+
+def test_menagerie_mujoco_world_loads(menagerie_walking_skeleton_yaml: Path):
+    """MuJoCoWorld.from_manifest_path succeeds end-to-end: load yaml,
+    open MJCF, build lookups."""
+    world = MuJoCoWorld.from_manifest_path(menagerie_walking_skeleton_yaml)
+    assert world.model.nu >= 5
+    assert world.model.nv >= 5
+    # Every actuator in the manifest should have a resolved MJCF index
+    for robot in world.manifest.robots:
+        for act in robot.actuators:
+            idx = world.actuator_id_for(act.mjcf_actuator)
+            assert idx is not None, f"{act.mjcf_actuator} not cached"
+
+
+def test_menagerie_no_self_collision_at_rest(menagerie_walking_skeleton_yaml: Path):
+    """mj_forward at the default pose should produce zero contacts.
+    Menagerie's trs_so_arm100 is hand-tuned to avoid the self-collision
+    issues the MVP-1 ElRobot URDF had."""
+    world = MuJoCoWorld.from_manifest_path(menagerie_walking_skeleton_yaml)
+    mujoco.mj_forward(world.model, world.data)
+    assert world.data.ncon == 0, (
+        f"Menagerie should have clean collision at rest, got {world.data.ncon} contacts"
+    )
+
+
+def test_menagerie_step_advances_time(menagerie_walking_skeleton_yaml: Path):
+    world = MuJoCoWorld.from_manifest_path(menagerie_walking_skeleton_yaml)
+    t0 = float(world.data.time)
+    for _ in range(100):
+        world.step()
+    t1 = float(world.data.time)
+    assert t1 > t0
+    # All qpos values still finite after 100 steps at rest
+    assert np.isfinite(world.data.qpos).all()
+    assert np.isfinite(world.data.qvel).all()
+
+
+def test_menagerie_all_actuators_drivable(menagerie_walking_skeleton_yaml: Path):
+    """Every actuator should accept a ctrl write and step without NaN.
+    Drive each actuator to its ctrlrange midpoint for 200 steps
+    (~0.4 sec sim) and verify qpos stays finite."""
+    world = MuJoCoWorld.from_manifest_path(menagerie_walking_skeleton_yaml)
+    ctrl_mid = (
+        world.model.actuator_ctrlrange[:, 0] + world.model.actuator_ctrlrange[:, 1]
+    ) / 2
+    world.data.ctrl[:] = ctrl_mid
+    for _ in range(200):
+        world.step()
+        assert np.isfinite(world.data.qpos).all(), "NaN during mid-ctrl drive"
+
+
+def test_menagerie_stress_10000_random_steps_no_nan(menagerie_walking_skeleton_yaml: Path):
+    """Stress test: 10000 random-ctrl steps, resampling every 100 steps.
+    This is the Floor 3 analog for the Menagerie baseline."""
+    world = MuJoCoWorld.from_manifest_path(menagerie_walking_skeleton_yaml)
+    rng = np.random.default_rng(42)
+    lo = world.model.actuator_ctrlrange[:, 0]
+    hi = world.model.actuator_ctrlrange[:, 1]
+    for step in range(10000):
+        if step % 100 == 0:
+            world.data.ctrl[:] = rng.uniform(lo, hi)
+        world.step()
+        if step % 1000 == 0:
+            assert np.isfinite(world.data.qpos).all(), f"NaN at step {step}"
+    assert np.isfinite(world.data.qpos).all()
+    assert np.isfinite(world.data.qvel).all()
+```
+
+- [ ] **Step 2: Run the test**
+
+```bash
+PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/integration/test_menagerie_walking_skeleton.py -v
+```
+
+Expected: 6 tests PASSED. If any fails, the walking skeleton for Menagerie is broken — STOP and debug before proceeding.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add software/sim-server/tests/integration/test_menagerie_walking_skeleton.py
+git commit -m "test: add Menagerie walking skeleton regression suite"
+```
+
+---
+
+### Task 4.5: Manual browser smoke test for Phase 1
+
+**Files:** None (manual verification)
+
+**Rationale:** The automated test in Task 4.4 runs Menagerie through `norma_sim` (Python only, no Rust). The full stack smoke test starts the station binary with `station-sim-menagerie.yaml`, connects a browser, and drags sliders. This is the **Phase 1 gate** — if the browser shows sliders and they respond, hypothesis A is confirmed.
+
+- [ ] **Step 1: Start station with Menagerie config**
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim-menagerie.yaml --web 0.0.0.0:8889 2>&1 | tail -20
+```
+
+Expected stdout within ~5 seconds:
+- Lines about NormFS mounting
+- Lines about sim-runtime starting subprocess
+- Line about subprocess welcomed with Menagerie world_name
+- Line about st3215-compat-bridge registering inference queue
+- Line about web server listening on `0.0.0.0:8889`
+
+If any error appears, STOP and capture the output. Common issues:
+- `ImportError: cannot import name 'verify_source_hash'` → Chunk 2 Task 2.2 Step 2b was skipped. Go back and do it.
+- `ValueError: scene.yaml ... missing required 'mjcf_path'` → Chunk 4 Task 4.1 yaml has a typo.
+- `no such actuator 'shoulder_pan' in MJCF` → Task 4.2 preset references wrong actuator_id names.
+
+- [ ] **Step 2: Open `http://localhost:8889` in a browser**
+
+Expected:
+- Page loads (no "connect a robot" empty state — Chunk 2 cli.py fix should have propagated)
+- ST3215 viewer shows a bus with motor_id 1..N where N is the Menagerie actuator count
+- Each motor has a "POS" reading (currently at the midpoint or zero)
+
+If the empty state appears: the bridge isn't registering its inference queue. Check station logs for `register_queue` call.
+
+- [ ] **Step 3: Drag one slider, verify response**
+
+In the ST3215 viewer:
+- Change any motor's "Control Source" dropdown to "Web" (if not already)
+- Drag its "Goal Position" slider slowly
+- Expected: the 3D view (if visible) shows the corresponding joint rotating smoothly
+- Expected: the POS reading updates to track the slider
+- Release the slider and verify the motor holds position (doesn't spring back)
+
+Repeat for a different motor to confirm multiple motors work simultaneously.
+
+- [ ] **Step 4: Side-by-side with MuJoCo native viewer (visual quality baseline)**
+
+In a separate terminal:
+
+```bash
+python -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml
+```
+
+In the MuJoCo viewer window, drag the same joints you tested in the browser. Compare visual quality:
+- Do they render equivalently? (No obvious frame drops or artifacts in the browser that aren't in the MuJoCo native view.)
+- Does the arm's physical response feel the same? (No obvious damping differences or lag.)
+
+If the browser view visibly lags or differs from MuJoCo viewer: the web rendering path may have latency issues (Chunk 3 inference-states pipeline) or frame-drop issues. Record the discrepancy but do not block on it — Phase 1 is about infra working, not pixel-perfect parity.
+
+- [ ] **Step 5: Shutdown cleanly**
+
+In the station terminal, press Ctrl+C. Expected:
+- Station subprocess terminates cleanly (no "kill -9 required" messages)
+- Station process exits with code 0
+- No "BrokenPipeError" or "socket address already in use" on next startup
+
+- [ ] **Step 6: Record the smoke test outcome**
+
+No commit — this is manual verification. But record a short note in `/tmp/phase1_smoke_results.txt` (or similar) with:
+- Date + time
+- Menagerie commit SHA (from Chunk 1 Task 1.2's VENDOR.md)
+- Station commit SHA
+- Number of motors observed in the UI
+- Any visual or functional discrepancies noted
+- Whether Phase 1 gate passes (Y/N)
+
+---
+
+### Task 4.6: Chunk 4 gate
+
+**Files:** None (verification)
+
+- [ ] **Step 1: Run full test suite**
+
+```bash
+make sim-test 2>&1 | tail -20
+```
+
+Expected:
+- Architecture invariants ✓
+- All Rust tests pass (zero Rust touched in Chunk 4)
+- Python: Chunk 3's expected pass + Chunk 4's new 6 tests = even higher green count
+- Zero failures
+
+- [ ] **Step 2: Confirm Phase 1 manual smoke passed**
+
+Task 4.5 must have a Y outcome. If N, STOP and debug before proceeding to Chunk 5.
+
+- [ ] **Step 3: Chunk 4 completion summary**
+
+1. ✅ `menagerie_so_arm100.scene.yaml` exists and loads
+2. ✅ `presets/menagerie-so-arm100.yaml` exists and validates
+3. ✅ `station-sim-menagerie.yaml` exists and starts station successfully
+4. ✅ `test_menagerie_walking_skeleton.py` has 6 green tests
+5. ✅ Phase 1 manual browser smoke test passed
+6. ✅ MuJoCo viewer side-by-side comparison shows equivalent rendering
+7. ✅ Rust + arch invariants unchanged
+8. ✅ No new test failures
+
+**Do NOT proceed to Chunk 5 if any of 1-8 fail.** Phase 1 is the gate for hypothesis A; Chunk 5 would be building Phase 2 on unverified infra otherwise.
+
+---
+
+**Next:** Chunk 5 hand-writes the ElRobot 8-joint MJCF by adapting Menagerie's parameters.
+
+---
+
+## Chunk 5: Phase 2 — ElRobot 8-joint MJCF construction
+
+**Purpose:** Hand-write `elrobot_follower.xml` as the ElRobot-specific MJCF, using Menagerie's hand-tuned parameters as the physics baseline and ElRobot's URDF as the kinematic topology reference. Produce the Menagerie comparison table as a spec artifact. Delete `gen.py` and the old `worlds/` directory. Restore `station-sim.yaml` to point at ElRobot (from Chunk 4's Menagerie detour).
+
+**Gate:** `hardware/elrobot/simulation/elrobot_follower.xml` loads via `MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)` without errors. `mj_forward` produces `data.ncon == 0`. All 8 actuators enumerate. The tendon-based gripper mimic (Chunk 5's P0 invariant) still works. `gen.py` is deleted. `worlds/` directory is deleted.
+
+**Prerequisites:** Chunks 1-4 complete. Chunk 4's walking skeleton test is green and stays green throughout Chunk 5.
+
+**Files touched:**
+- Create: `hardware/elrobot/simulation/elrobot_follower.xml` (hand-written MJCF)
+- Create: `hardware/elrobot/simulation/elrobot_follower.scene.yaml` (new scene config)
+- Create: `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md` (spec artifact)
+- Delete: `hardware/elrobot/simulation/worlds/gen.py`
+- Delete: `hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml`
+- Delete: `hardware/elrobot/simulation/worlds/elrobot_follower.xml` (the old gen.py-produced one)
+- Delete: `hardware/elrobot/simulation/worlds/README.md` (if it exists)
+- Delete: `hardware/elrobot/simulation/worlds/` directory (empty after above)
+- Modify: `software/station/bin/station/station-sim.yaml` (update scene yaml path to new location)
+- Modify: `Makefile` (remove `regen-mjcf` target and references)
+
+---
+
+### Task 5.1: Produce the Menagerie comparison table (research spike)
+
+**Files:**
+- Create: `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md`
+
+**Rationale:** Before writing the MJCF, read Menagerie's `trs_so_arm100.xml` carefully and produce an explicit mapping from each ElRobot joint to its Menagerie analog (if any), recording the armature/damping/inertial values we plan to copy. This makes Chunk 5's subsequent MJCF work deterministic and auditable.
+
+- [ ] **Step 1: Read Menagerie's trs_so_arm100.xml**
+
+Use the Read tool on `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml`. Identify:
+- The `<default>` block with joint armature/damping defaults
+- Each joint's inertial properties (via parent body's `<inertial>` element)
+- The actuator section with kp/kv/forcerange defaults
+- Gripper implementation details (tendon, equality, mimic joints)
+
+- [ ] **Step 2: Read ElRobot's URDF to cross-reference**
+
+Use the Read tool on `hardware/elrobot/simulation/elrobot_follower.urdf`. For each of the 8 joints (M1-M8), note:
+- Parent/child link names
+- Axis of rotation
+- Joint limits (from URDF `<limit>`)
+- Existing inertial values (from URDF `<inertial>`)
+- Mesh file references
+
+- [ ] **Step 3: Write the comparison table**
+
+Create `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md`:
+
+```markdown
+# MVP-2 Menagerie → ElRobot Parameter Comparison Table
+
+| | |
+|---|---|
+| **日期** | 2026-04-11 (或执行时实际日期) |
+| **状态** | Phase 2 research spike 产物 |
+| **Menagerie source** | mujoco_menagerie/trs_so_arm100 @ commit {SHA from VENDOR.md} |
+| **Target** | hardware/elrobot/simulation/elrobot_follower.xml |
+
+## 拓扑对照
+
+### Menagerie SO-ARM100（N 个 actuators）
+| Joint | 类型 | armature | damping | frictionloss | 备注 |
+|---|---|---|---|---|---|
+| {填入} | {填入} | {填入} | {填入} | {填入} | {填入} |
+| ... | | | | | |
+
+### ElRobot (8 actuators)
+| Joint | ElRobot URDF link | Menagerie analog | armature | damping | frictionloss | 来源 |
+|---|---|---|---|---|---|---|
+| M1 Shoulder Pitch | {link 1} | {menagerie joint} | {value} | {value} | {value} | menagerie direct |
+| M2 Shoulder Roll | {link 2} | **无对应** | {用 M1 值} | {用 M1 值} | {用 M1 值} | nearest-neighbor (M1) |
+| M3 Shoulder Yaw | {link 3} | {menagerie joint or none} | ... | ... | ... | ... |
+| M4 Elbow | {link 4} | {menagerie joint} | ... | ... | ... | menagerie direct |
+| M5 Wrist Roll | {link 5} | {menagerie joint} | ... | ... | ... | ... |
+| M6 Wrist Pitch | {link 6} | {menagerie joint} | ... | ... | ... | ... |
+| M7 Wrist Yaw | {link 7} | **无对应** | {用 M6 值} | {用 M6 值} | {用 M6 值} | nearest-neighbor (M6) |
+| M8 Gripper | {link 8} | {menagerie joint} | ... | ... | ... | ... |
+
+## 参数继承策略
+
+1. **`<option>`**: 直接继承 Menagerie (timestep, integrator, solver, iterations, tolerance)
+2. **`<default>` classes**:
+   - Menagerie 有 classes: {list}
+   - ElRobot 继承所有 classes 不修改
+3. **Actuator kp/kv/forcerange**: Menagerie 默认值作为 ElRobot 的 baseline. 若 Phase 2 smoke test 过不了 Floor 4 step response, 允许 per-joint 微调
+4. **Gripper mimic**: Menagerie 使用 {tendon / weld / 其它}. ElRobot 保留 MVP-1 的 `<tendon><fixed>` + `<equality><tendon>` 实现（P0 不可破）
+
+## 独有关节的估值依据
+
+| ElRobot 关节 | 估值来源 | 备注 |
+|---|---|---|
+| M2 Shoulder Roll | M1 Shoulder Pitch | 同为 shoulder 组，惯量量级相近 |
+| M7 Wrist Yaw | M6 Wrist Pitch | 同为 wrist 组，惯量极小 |
+
+(填入实际策略。若 Menagerie 有多于 1 个 shoulder joint 或 wrist joint, 选择 axis 最接近的)
+
+## Risk notes
+
+- Menagerie 的 {具体 class / 具体参数} 如果和 ElRobot 不兼容, 记录 deviation 并说明 why
+- 若 Menagerie 的 kp 过低导致 ElRobot 的重关节过不了 Floor 4, 允许调高 kp 但 armature 必须保持 Menagerie 值
+```
+
+- [ ] **Step 4: Fill in all `{填入}` placeholders with actual data from Step 1 and Step 2**
+
+This is the **manual research effort** — read both files carefully and produce a concrete table. No test automation can do this.
+
+- [ ] **Step 5: Commit the comparison table**
+
+```bash
+git add docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md
+git commit -m "spec: MVP-2 Menagerie → ElRobot parameter comparison table"
+```
+
+---
+
+### Task 5.2: Hand-write `elrobot_follower.xml`
+
+**Files:**
+- Create: `hardware/elrobot/simulation/elrobot_follower.xml`
+
+**Rationale:** The hand-written MJCF is the core deliverable of Phase 2. It must:
+1. Use Menagerie-inherited `<option>` and `<default>` blocks
+2. Have 8 `<position>` actuators for M1-M8
+3. Construct the ElRobot body tree from URDF kinematics
+4. Reference `../assets/*.stl` for visual meshes
+5. Use primitive collision geometry (boxes/capsules) to avoid MVP-1's self-collision issues
+6. Preserve the gripper tendon-mimic structure that Chunk 1's P0 tests require
+
+- [ ] **Step 1: Start from Menagerie's `<option>` + `<default>` as template**
+
+Copy Menagerie's `trs_so_arm100.xml` `<option>` and `<default>` blocks into the new file. Preserve the class hierarchy (`arm_link`, `visual`, `collision`, etc. — whatever Menagerie uses).
+
+- [ ] **Step 2: Construct the body tree from ElRobot URDF**
+
+For each URDF `<joint>` (M1-M7 revolute + M8 gripper + 2 mimic), emit a matching `<body>` + `<joint>` + `<geom>` triple in the MJCF. Use URDF's pos/axis/range exactly. Use ElRobot's own STL files via `../assets/*.stl` relative paths.
+
+Example structure:
+
+```xml
+<worldbody>
+  <body name="base_link" pos="0 0 0">
+    <geom type="mesh" mesh="base_link" class="visual"/>
+    <geom type="box" size="0.05 0.05 0.03" pos="0 0 0.015" class="collision"/>
+    <body name="link_01" pos="{from URDF}" quat="{from URDF}">
+      <joint name="rev_motor_01" type="hinge" axis="{from URDF}" range="{from URDF}"/>
+      <geom type="mesh" mesh="Joint_01_1" class="visual"/>
+      <geom type="capsule" ... class="collision"/>
+      <body name="link_02" ...>
+        <!-- continue down the chain -->
+      </body>
+    </body>
+  </body>
+</worldbody>
+```
+
+For M8 gripper: replicate MVP-1's tendon + equality structure (which P0 tests depend on). The MVP-1 `elrobot_follower.xml` (generated by gen.py, about to be deleted) is a fine reference for the gripper block — grep it before deleting:
+
+```bash
+grep -A 30 '<tendon>\|<equality>' hardware/elrobot/simulation/worlds/elrobot_follower.xml > /tmp/mvp1_gripper_block.txt
+```
+
+Use `/tmp/mvp1_gripper_block.txt` as the gripper section of the new MJCF (with any path/name fixups).
+
+- [ ] **Step 3: Apply Menagerie-inherited `armature` / `damping` to joints**
+
+Using the comparison table from Task 5.1, add per-joint `armature=` and `damping=` attributes. Joints with Menagerie analogs get the analog values; M2/M7 (or whichever are ElRobot-unique) get nearest-neighbor estimates.
+
+Example:
+
+```xml
+<joint name="rev_motor_01" ... armature="0.015" damping="0.3"/>
+```
+
+(Exact numbers depend on Task 5.1's findings.)
+
+- [ ] **Step 4: Emit the actuator section**
+
+For each of 8 actuators, emit a `<position>` element with kp/kv from the Menagerie comparison table and ctrlrange/forcerange from ElRobot's URDF limits:
+
+```xml
+<actuator>
+  <position name="act_motor_01" joint="rev_motor_01"
+            kp="{menagerie kp}" kv="{menagerie kv}"
+            ctrlrange="{urdf range}" forcerange="{-urdf effort} {urdf effort}"/>
+  ...
+  <position name="act_motor_08" joint="rev_motor_08"
+            kp="10" kv="0.3"
+            ctrlrange="0 2.2028" forcerange="-2.94 2.94"/>
+</actuator>
+```
+
+- [ ] **Step 5: Use primitive collision geometry, not full mesh**
+
+For every `<geom class="collision">` or equivalent, use a primitive shape (box, sphere, capsule) approximating the link. Do NOT use `type="mesh"` for collision geoms — this is what avoided Menagerie's self-collision issues and is spec §7.3 item 3's explicit strategy.
+
+- [ ] **Step 6: Load test**
+
+```bash
+python -m mujoco.viewer hardware/elrobot/simulation/elrobot_follower.xml
+```
+
+Expected: the ElRobot arm renders in the viewer. Manual drag test: rotate a joint, verify it moves smoothly. Close viewer.
+
+If the MJCF has compile errors: debug by reading the MuJoCo error message. Common issues:
+- Mesh path wrong → adjust `../assets/` relative path
+- Joint axis not normalized → URDF might need re-export
+- Inertia singular (body has zero mass) → add a minimal `<inertial>` block to the offending body
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add hardware/elrobot/simulation/elrobot_follower.xml
+git commit -m "mvp2: hand-write elrobot_follower.xml for Phase 2"
+```
+
+---
+
+### Task 5.3: Write `elrobot_follower.scene.yaml`
+
+**Files:**
+- Create: `hardware/elrobot/simulation/elrobot_follower.scene.yaml`
+
+- [ ] **Step 1: Write the scene yaml**
+
+Create `hardware/elrobot/simulation/elrobot_follower.scene.yaml`:
+
+```yaml
+# MVP-2 Phase 2 — ElRobot scene config.
+#
+# Replaces MVP-1's worlds/elrobot_follower.world.yaml which was both
+# gen.py manifest AND scene config. This file is pure scene config —
+# load the hand-written MJCF and annotate the gripper.
+
+world_name: elrobot_follower
+robot_id: elrobot_follower
+mjcf_path: ./elrobot_follower.xml
+
+# No scene_overrides — elrobot_follower.xml's <option> is authoritative.
+# No scene_extras — the MJCF has its own lighting/floor setup.
+
+actuator_annotations:
+  - mjcf_actuator: act_motor_08
+    actuator_id: rev_motor_08
+    display_name: Gripper
+    capability:
+      kind: GRIPPER_PARALLEL
+      limit_min: 0.0
+      limit_max: 1.0
+      effort_limit: 2.94
+      velocity_limit: 4.71
+      normalized_range: [0.0, 1.0]
+    gripper:
+      primary_joint_range_rad: [0.0, 2.2028]
+      mimic_joints:
+        - {joint: rev_motor_08_1, multiplier: -0.0115}
+        - {joint: rev_motor_08_2, multiplier: 0.0115}
+```
+
+- [ ] **Step 2: Smoke test loader**
+
+```bash
+PYTHONPATH=software/sim-server python3 -c "
+from pathlib import Path
+from norma_sim.world.model import MuJoCoWorld
+world = MuJoCoWorld.from_manifest_path(Path('hardware/elrobot/simulation/elrobot_follower.scene.yaml'))
+print(f'nu={world.model.nu}')
+print(f'neq={world.model.neq}')
+print(f'ntendon={world.model.ntendon}')
+gripper = world.actuator_by_mjcf_name('act_motor_08')
+assert gripper is not None
+assert gripper.capability.kind == 'GRIPPER_PARALLEL'
+print('ElRobot scene yaml loads OK')
+"
+```
+
+Expected: `nu=8`, `neq=2`, `ntendon=2`, "ElRobot scene yaml loads OK".
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add hardware/elrobot/simulation/elrobot_follower.scene.yaml
+git commit -m "mvp2: add elrobot_follower.scene.yaml pointing at hand-written MJCF"
+```
+
+---
+
+### Task 5.4: Run ElRobot-flavored tests that were skipped during Chunks 2-4
+
+**Files:** None (verification; tests are already in place from Chunk 3)
+
+**Rationale:** Chunks 2-4 left several tests marked `pytest.skip` because `elrobot_scene_yaml` fixture didn't exist. Now that it does, run them.
+
+- [ ] **Step 1: Run previously-skipped ElRobot tests**
+
+```bash
+PYTHONPATH=software/sim-server python3 -m pytest \
+    software/sim-server/tests/world/test_model.py::test_mujoco_world_loads_elrobot_mjcf \
+    software/sim-server/tests/world/test_model.py::test_mujoco_world_elrobot_actuator_lookups \
+    software/sim-server/tests/world/test_model.py::test_mujoco_world_elrobot_joint_qposadr_lookups \
+    software/sim-server/tests/world/test_model.py::test_mujoco_world_elrobot_actuator_by_mjcf_name \
+    software/sim-server/tests/world/test_snapshot.py::test_snapshot_initial_state_elrobot \
+    software/sim-server/tests/world/test_snapshot.py::test_snapshot_tracks_ctrl_goal_elrobot \
+    software/sim-server/tests/world/test_snapshot.py::test_snapshot_gripper_reports_normalized_elrobot \
+    software/sim-server/tests/world/test_mimic_gripper.py \
+    software/sim-server/tests/world/test_descriptor_build.py::test_build_world_descriptor_happy_elrobot \
+    software/sim-server/tests/world/test_descriptor_build.py::test_build_world_descriptor_actuator_kinds_elrobot \
+    software/sim-server/tests/world/test_descriptor_build.py::test_build_world_descriptor_encodes_elrobot \
+    -v
+```
+
+Expected: all tests PASS. **P0 gripper mimic tests** (`test_mimic_gripper.py`) must pass — if they don't, Task 5.2's MJCF gripper block is wrong and must be fixed before proceeding.
+
+- [ ] **Step 2: Run the walking skeleton test to confirm Menagerie still works**
+
+```bash
+PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/integration/test_menagerie_walking_skeleton.py -v
+```
+
+Expected: all 6 tests still green. If they regressed, we broke something in Chunk 5 that affects norma_sim.world (shouldn't have touched any of it, but double-check).
+
+- [ ] **Step 3: No commit — pure verification**
+
+---
+
+### Task 5.5: Delete `gen.py`, `worlds/` directory, and update `Makefile` + `station-sim.yaml`
+
+**Files:**
+- Delete: `hardware/elrobot/simulation/worlds/gen.py`
+- Delete: `hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml`
+- Delete: `hardware/elrobot/simulation/worlds/elrobot_follower.xml`
+- Delete: `hardware/elrobot/simulation/worlds/README.md` (if exists)
+- Delete: `hardware/elrobot/simulation/worlds/` directory
+- Modify: `Makefile` (remove `regen-mjcf` target + references)
+- Modify: `software/station/bin/station/station-sim.yaml` (update scene yaml path)
+
+**Rationale:** The MVP-1 artifacts are no longer needed (MJCF is hand-written, no generation pipeline). Clean them up. Also repoint the MVP-1 station-sim.yaml to the new scene yaml location.
+
+- [ ] **Step 1: Delete `worlds/` contents**
+
+```bash
+ls hardware/elrobot/simulation/worlds/
+```
+
+Expected: `gen.py`, `elrobot_follower.world.yaml`, `elrobot_follower.xml`, possibly `README.md`.
+
+```bash
+git rm hardware/elrobot/simulation/worlds/gen.py
+git rm hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+git rm hardware/elrobot/simulation/worlds/elrobot_follower.xml
+[if README exists] git rm hardware/elrobot/simulation/worlds/README.md
+```
+
+Then remove the now-empty directory (git removes it automatically when all files are gone):
+
+```bash
+ls hardware/elrobot/simulation/worlds/ 2>&1
+```
+
+Expected: `No such file or directory` (git does not track empty directories).
+
+- [ ] **Step 2: Update `Makefile`**
+
+```bash
+grep -n 'regen-mjcf\|worlds/gen.py\|worlds/' Makefile
+```
+
+Expected hits:
+- A `regen-mjcf:` target (delete it)
+- Any references to `worlds/gen.py` or `worlds/elrobot_follower.xml` in other targets (delete)
+- The `.PHONY: regen-mjcf` line if present (delete)
+
+Apply the deletions with the Edit tool. Verify clean:
+
+```bash
+grep -n 'regen-mjcf\|worlds/gen.py' Makefile
+```
+
+Expected: no matches.
+
+- [ ] **Step 3: Update `station-sim.yaml`**
+
+```bash
+grep -n 'world_manifest\|scene_yaml\|world.yaml' software/station/bin/station/station-sim.yaml
+```
+
+Find the line that references the old scene yaml path. Update it:
+
+```yaml
+# before:
+world_manifest: hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+# after:
+world_manifest: hardware/elrobot/simulation/elrobot_follower.scene.yaml
+```
+
+(Exact field name depends on station_iface schema — it might be `scene_yaml` or `manifest` or similar; match whatever the existing yaml uses.)
+
+- [ ] **Step 4: Smoke test — station loads the updated config**
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim.yaml --validate-only 2>&1 || echo "no --validate-only, skipping"
+```
+
+Alternative if `--validate-only` doesn't exist: briefly start station and kill it:
+
+```bash
+timeout 5 ./target/debug/station -c software/station/bin/station/station-sim.yaml --web 0.0.0.0:8889 2>&1 | head -20
+```
+
+Expected: station starts, subprocess spawns, no errors about missing scene yaml. Kill with Ctrl+C after verifying it's running.
+
+- [ ] **Step 5: Run `make sim-test` to verify regressions**
+
+```bash
+make sim-test 2>&1 | tail -15
+```
+
+Expected: all tests still green. The `worlds/` deletion should not affect tests (conftest.py fixtures point at the new location).
+
+- [ ] **Step 6: Commit deletions + config updates as one atomic change**
+
+```bash
+git add -u hardware/elrobot/simulation/worlds/ Makefile software/station/bin/station/station-sim.yaml
+git commit -m "mvp2: delete gen.py + worlds/ directory, repoint station-sim.yaml"
+```
+
+Commit body:
+
+```
+The URDF → MJCF pipeline is no longer needed in MVP-2. elrobot_follower.xml
+is hand-written at hardware/elrobot/simulation/elrobot_follower.xml (see
+Chunk 5 Task 5.2). worlds/gen.py and its outputs are deleted.
+
+Station-sim.yaml is repointed to the new scene yaml location. The
+Makefile loses its regen-mjcf target.
+```
+
+---
+
+### Task 5.6: Chunk 5 gate
+
+**Files:** None (verification)
+
+- [ ] **Step 1: Run full test suite**
+
+```bash
+make sim-test 2>&1 | tail -20
+```
+
+Expected:
+- Architecture invariants ✓
+- All Rust tests pass (zero Rust touched)
+- Python: Chunk 4 count + all previously-skipped ElRobot tests now pass
+- Zero failures
+
+- [ ] **Step 2: Verify `gen.py` is gone**
+
+```bash
+find hardware/elrobot/simulation -name 'gen.py' -o -name '*.world.yaml'
+```
+
+Expected: no matches.
+
+- [ ] **Step 3: Verify Menagerie walking skeleton still green**
+
+```bash
+PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/integration/test_menagerie_walking_skeleton.py -v
+```
+
+Expected: 6 tests still PASS. Permanent regression fixture working.
+
+- [ ] **Step 4: Chunk 5 completion summary**
+
+1. ✅ Comparison table artifact committed (`2026-04-11-mvp2-menagerie-comparison-table.md`)
+2. ✅ `elrobot_follower.xml` hand-written and loads via MuJoCo
+3. ✅ `elrobot_follower.scene.yaml` loads via `MuJoCoWorld.from_manifest_path`
+4. ✅ All previously-skipped ElRobot tests now pass (including P0 gripper mimic)
+5. ✅ `gen.py` and `worlds/` directory deleted
+6. ✅ `Makefile` + `station-sim.yaml` updated
+7. ✅ Walking skeleton still green (permanent regression holds)
+8. ✅ Architecture invariants + Rust tests unchanged
+
+---
+
+**Next:** Chunk 6 writes the `test_elrobot_acceptance.py` with the 6 Floor criteria from spec §3.1.
+
+---
+
+## Chunk 6: Phase 2 — Acceptance tests (Floor §3.1)
+
+**Purpose:** Code-ify the 6 Floor acceptance criteria from spec §3.1 as automated tests. Each criterion becomes one or more pytest functions. The parametrized per-motor step response test (Floor 4) is the most rigorous — it fails loudly if any single motor doesn't respond within spec.
+
+**Gate:** All 6 Floor criteria pass on the ElRobot MJCF from Chunk 5. The per-motor parametrize test shows 8 PASSED (one per motor). If any motor fails, iterate on ElRobot MJCF tuning (adjust kp/kv) up to the **5-iteration tuning budget** before escalating.
+
+**Prerequisites:** Chunks 1-5 complete.
+
+**Files touched:**
+- Create: `software/sim-server/tests/integration/test_elrobot_acceptance.py`
+
+---
+
+### Task 6.1: Write the acceptance test file
+
+**Files:**
+- Create: `software/sim-server/tests/integration/test_elrobot_acceptance.py`
+
+- [ ] **Step 1: Write the file**
+
+Create `software/sim-server/tests/integration/test_elrobot_acceptance.py`:
+
+```python
+"""MVP-2 Phase 2 acceptance: 6 Floor criteria for ElRobot smoothness.
+
+This is the definition of done for MVP-2. If any test fails, iterate
+on elrobot_follower.xml until they all pass — 5-iteration tuning
+budget, then escalate per spec §7.5 / §10 Risk B.
+
+Criteria (spec §3.1):
+  Floor 1 — no self-collision at rest
+  Floor 2 — effective inertia floor (M[i,i] + armature >= 1e-4)
+  Floor 3 — 10000-step stress with no NaN
+  Floor 4 — per-motor step response (0.9 × ctrl_hi reached in 2s, overshoot ≤ 15%)
+  Floor 5 — P0 mimic gripper regression (delegated to test_mimic_gripper.py)
+  Floor 6 — MVP-1 test suite still green (delegated to make sim-test)
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+try:
+    import mujoco
+    from norma_sim.world.model import MuJoCoWorld
+    _OK = True
+    _ERR = ""
+except Exception as e:  # pragma: no cover
+    _OK = False
+    _ERR = str(e)
+
+
+pytestmark = pytest.mark.skipif(not _OK, reason=f"imports not OK: {_ERR}")
+
+
+# ----------------------------------------------------------------------
+# Floor 1 — no self-collision at rest
+# ----------------------------------------------------------------------
+
+def test_elrobot_no_self_collision_at_rest(elrobot_scene_yaml):
+    """mj_forward at home pose should produce zero contacts.
+    This catches URDF mesh overlap issues that MVP-1 had."""
+    world = MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)
+    mujoco.mj_forward(world.model, world.data)
+    assert world.data.ncon == 0, (
+        f"ElRobot should have clean collision at rest, got "
+        f"{world.data.ncon} contacts. MVP-2 spec §3.1 Floor 1."
+    )
+
+
+# ----------------------------------------------------------------------
+# Floor 2 — effective inertia floor
+# ----------------------------------------------------------------------
+
+def test_elrobot_effective_inertia_floor(elrobot_scene_yaml):
+    """Every DOF should have M[i,i] + armature[i] >= 1e-4 kg·m².
+    This ensures no joint is numerically ill-conditioned (MVP-1's
+    gripper primary joint had 2.5e-7 — catastrophic)."""
+    world = MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)
+    mujoco.mj_forward(world.model, world.data)
+    M = np.zeros((world.model.nv, world.model.nv))
+    mujoco.mj_fullM(world.model, M, world.data.qM)
+    failures = []
+    for i in range(world.model.nv):
+        effective = M[i, i] + world.model.dof_armature[i]
+        if effective < 1e-4:
+            # Resolve the joint name for a clearer error
+            joint_id = None
+            for j in range(world.model.njnt):
+                if world.model.jnt_dofadr[j] == i:
+                    joint_id = j
+                    break
+            joint_name = (
+                mujoco.mj_id2name(world.model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+                if joint_id is not None else f"dof{i}"
+            )
+            failures.append(
+                f"DOF {i} ({joint_name}): M[i,i]={M[i,i]:.2e}, "
+                f"armature={world.model.dof_armature[i]:.2e}, "
+                f"total={effective:.2e}"
+            )
+    assert not failures, (
+        "Spec §3.1 Floor 2 failures (effective inertia < 1e-4 kg·m²):\n"
+        + "\n".join(failures)
+    )
+
+
+# ----------------------------------------------------------------------
+# Floor 3 — stress test: 10000 random-ctrl steps, no NaN
+# ----------------------------------------------------------------------
+
+def test_elrobot_stress_10000_random_steps_no_nan(elrobot_scene_yaml):
+    """10000 random-ctrl steps (resample every 100), verify qpos stays finite."""
+    world = MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)
+    rng = np.random.default_rng(42)
+    lo = world.model.actuator_ctrlrange[:, 0]
+    hi = world.model.actuator_ctrlrange[:, 1]
+    for step in range(10000):
+        if step % 100 == 0:
+            world.data.ctrl[:] = rng.uniform(lo, hi)
+        world.step()
+        if step % 1000 == 0:
+            assert np.isfinite(world.data.qpos).all(), (
+                f"NaN at step {step}. Spec §3.1 Floor 3."
+            )
+    assert np.isfinite(world.data.qpos).all()
+    assert np.isfinite(world.data.qvel).all()
+
+
+# ----------------------------------------------------------------------
+# Floor 4 — per-motor step response
+# ----------------------------------------------------------------------
+
+@pytest.fixture
+def elrobot_world(elrobot_scene_yaml):
+    """Shared fixture for all 8 motor parametrizations. A fresh
+    MuJoCoWorld per test to avoid state leakage."""
+    return MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)
+
+
+@pytest.mark.parametrize("motor_idx", range(8))
+def test_elrobot_motor_step_response(elrobot_scene_yaml, motor_idx: int):
+    """Drive motor `motor_idx` to 0.9 × ctrlrange_hi. Verify:
+    - qpos reaches ≥ 80% of target within 2s (1000 steps @ dt=0.002)
+    - overshoot ≤ 15% of the target value
+
+    Parametrized so failure messages specify which motor is broken.
+    Spec §3.1 Floor 4."""
+    world = MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)
+    assert 0 <= motor_idx < world.model.nu, (
+        f"motor_idx {motor_idx} out of range; ElRobot has {world.model.nu} actuators"
+    )
+
+    ctrl_lo = float(world.model.actuator_ctrlrange[motor_idx, 0])
+    ctrl_hi = float(world.model.actuator_ctrlrange[motor_idx, 1])
+    target = 0.9 * ctrl_hi
+    # Skip motors where 0.9 × ctrl_hi would also be 0 (symmetric range)
+    if abs(target) < 1e-9:
+        target = 0.5 * ctrl_hi  # use half-range instead
+        if abs(target) < 1e-9:
+            pytest.skip(f"motor {motor_idx} has zero ctrl range, cannot step-response test")
+
+    # Find the qpos address for the joint this actuator controls
+    joint_id = int(world.model.actuator_trnid[motor_idx, 0])
+    qadr = int(world.model.jnt_qposadr[joint_id])
+    joint_name = mujoco.mj_id2name(world.model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+    actuator_name = mujoco.mj_id2name(
+        world.model, mujoco.mjtObj.mjOBJ_ACTUATOR, motor_idx
+    )
+
+    world.data.ctrl[motor_idx] = target
+    max_reached = 0.0
+    for _ in range(1000):  # 2.0 sec at dt=0.002
+        world.step()
+        q = float(world.data.qpos[qadr])
+        if target > 0 and q > max_reached:
+            max_reached = q
+        if target < 0 and q < max_reached:
+            max_reached = q
+
+    final = float(world.data.qpos[qadr])
+    reached_fraction = final / target if abs(target) > 1e-9 else 0.0
+    overshoot = (
+        abs(max_reached - target) / abs(target)
+        if abs(target) > 1e-9 and abs(max_reached) > abs(target)
+        else 0.0
+    )
+
+    assert reached_fraction >= 0.8, (
+        f"Motor {motor_idx} ({actuator_name}, joint {joint_name}) "
+        f"only reached {final:.4f}/{target:.4f} = {reached_fraction:.1%} "
+        f"within 2.0s. Spec §3.1 Floor 4 requires >= 80%. "
+        f"Tune kp up or armature down for this joint in elrobot_follower.xml."
+    )
+    assert overshoot <= 0.15, (
+        f"Motor {motor_idx} ({actuator_name}) overshot by {overshoot:.1%} "
+        f"(max={max_reached:.4f}, target={target:.4f}). "
+        f"Spec §3.1 Floor 4 requires <= 15%. Tune kv up or add joint damping."
+    )
+
+
+# ----------------------------------------------------------------------
+# Floor 5 — P0 mimic gripper regression is delegated to test_mimic_gripper.py
+# (Chunk 3 Task 3.5 migrated those tests; Chunk 5 Task 5.4 verified they pass)
+# ----------------------------------------------------------------------
+
+def test_floor_5_delegation_note():
+    """Floor 5 (P0 gripper mimic) is covered by
+    software/sim-server/tests/world/test_mimic_gripper.py. This stub
+    exists only to make the Floor 5 intent visible in this file.
+    Running `pytest test_mimic_gripper.py` must show 2 PASSED."""
+    # No actual test logic — Floor 5 is a delegated concern.
+    pass
+
+
+# ----------------------------------------------------------------------
+# Floor 6 — full MVP-1 test suite still green is delegated to `make sim-test`
+# ----------------------------------------------------------------------
+
+def test_floor_6_delegation_note():
+    """Floor 6 (MVP-1 test suite still green) is covered by
+    `make sim-test` running in CI / locally. This stub exists only to
+    make the Floor 6 intent visible in this file. The Chunk 7 gate
+    runs `make sim-test` and asserts 0 failures."""
+    pass
+```
+
+- [ ] **Step 2: Run the file**
+
+```bash
+PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/integration/test_elrobot_acceptance.py -v
+```
+
+Expected outcome **depends on Chunk 5's MJCF tuning**:
+
+- **Best case**: all tests PASS on first run. Floors 1-3 are almost always satisfied by Menagerie parameters + clean collision primitives. Floor 4 (per-motor step response) is the fragile one — if Menagerie's kp/kv transfer cleanly, it passes too.
+
+- **Common case**: 1-3 motors fail Floor 4 with "only reached X%". This is the **tuning iteration** (spec §7.5 / §10 Risk B). For each failing motor:
+  1. Increase `kp` on that motor's `<position>` in `elrobot_follower.xml` by 25-50%.
+  2. If the motor then overshoots, increase `kv` proportionally (typically kv = 0.1 × kp for critically damped).
+  3. Re-run the failing test: `pytest ... -k test_elrobot_motor_step_response -v`.
+  4. If after 5 iterations the motor still fails, **STOP** and escalate per spec Risk B. Options:
+     - Revisit the Menagerie comparison table for that joint
+     - Increase the joint's `armature` (adds effective inertia, smooths response)
+     - Widen the Floor 4 tolerance (80% → 70%, 2s → 3s) as a **spec amendment** — must re-run spec review loop.
+
+- **Unlikely case**: Floors 1/2/3 fail. This means Chunk 5's MJCF is structurally broken. Go back to Task 5.2 and fix the mesh/inertial/tendon issues before re-running Chunk 6.
+
+- [ ] **Step 3: If all tests pass, commit**
+
+```bash
+git add software/sim-server/tests/integration/test_elrobot_acceptance.py
+git commit -m "test: MVP-2 Phase 2 acceptance — 6 Floor criteria"
+```
+
+Commit body (adjust the "tuning" notes based on actual execution):
+
+```
+Codifies spec §3.1 Floor 1-6 criteria as automated tests:
+- Floor 1: data.ncon == 0 at rest
+- Floor 2: effective inertia floor (M[i,i] + armature >= 1e-4)
+- Floor 3: 10000 random-ctrl steps, no NaN
+- Floor 4: per-motor step response (parametrized, 8 tests)
+- Floor 5: delegation stub (actual coverage in test_mimic_gripper.py)
+- Floor 6: delegation stub (actual coverage in make sim-test)
+
+All tests passing at commit time.
+```
+
+- [ ] **Step 4: If tuning was required, also commit the MJCF changes**
+
+If you had to adjust `elrobot_follower.xml` kp/kv/armature values during Step 2's iteration loop, commit those as a separate commit before the test file:
+
+```bash
+git add hardware/elrobot/simulation/elrobot_follower.xml
+git commit -m "mvp2: tune elrobot_follower.xml per Floor 4 response targets"
+```
+
+---
+
+### Task 6.2: Chunk 6 gate
+
+**Files:** None (verification)
+
+- [ ] **Step 1: Run full test suite**
+
+```bash
+make sim-test 2>&1 | tail -20
+```
+
+Expected:
+- Architecture invariants ✓
+- Rust tests unchanged
+- Python: everything from Chunks 2-5 + 13 new tests in `test_elrobot_acceptance.py` (3 Floor standalones + 8 parametrized Floor 4 + 2 delegation stubs)
+- Zero failures
+
+- [ ] **Step 2: Verify tuning budget wasn't exceeded**
+
+If Chunk 6 required more than 5 tuning iterations on `elrobot_follower.xml`, that's a **spec amendment** situation — STOP, write an amendment note in the spec, re-run spec review, then continue.
+
+- [ ] **Step 3: Chunk 6 completion summary**
+
+1. ✅ `test_elrobot_acceptance.py` exists with 6 Floor criteria encoded
+2. ✅ All 13 tests (3 floor standalone + 8 parametrized + 2 delegation) pass
+3. ✅ `test_mimic_gripper.py` P0 tests still pass (Floor 5)
+4. ✅ `make sim-test` zero failures (Floor 6)
+5. ✅ Rust + arch invariants unchanged
+6. ✅ If tuning was required, iteration budget not exceeded
+
+**Do NOT proceed to Chunk 7 if any Floor criterion failed.**
+
+---
+
+**Next:** Chunk 7 updates the manual checklist, memory docs, and runs the final DoD check.
+
+---
+
+## Chunk 7: Phase 2 — Manual smoke test, docs, and MVP-2 wrap-up
+
+**Purpose:** Run the manual browser smoke test (Ceiling acceptance criteria 7 + 8 from spec §3.2), update documentation (sim-server README manual checklist + sim_starting_point memory), and verify all 10 DoD items from spec §3.4 are ticked.
+
+**Gate:** All 10 DoD items ticked. `sim_starting_point.md` reflects MVP-2 completion. Plan completed.
+
+**Prerequisites:** Chunks 1-6 complete.
+
+**Files touched:**
+- Modify: `software/sim-server/README.md` (add MVP-2 Phase 2 manual checklist)
+- Modify: `~/.claude/projects/-home-yuan-proj-norma-core/memory/sim_starting_point.md` (mark MVP-2 complete)
+
+---
+
+### Task 7.1: Manual browser smoke test for ElRobot (Ceiling §3.2)
+
+**Files:** None (manual verification)
+
+- [ ] **Step 1: Start station with ElRobot config**
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim.yaml --web 0.0.0.0:8889 2>&1 | tail -10
+```
+
+Expected: station starts, subprocess spawns with `elrobot_follower.scene.yaml`, web server listens on 8889.
+
+- [ ] **Step 2: Open http://localhost:8889 and verify 8 motors visible**
+
+In a browser, navigate to `http://localhost:8889`. Expected:
+- No "connect a robot" empty state
+- ST3215 viewer shows 8 motors (M1-M8) on the sim bus
+
+- [ ] **Step 3: Drag each motor slider and verify smooth response**
+
+For each of M1 through M7:
+- Set control source to "Web"
+- Drag the slider slowly from current position toward one extreme of its range
+- Expected: 3D view (if visible) shows the joint rotating smoothly
+- Expected: no oscillation, no visible jitter, no popping
+- Release the slider and verify the motor holds position (doesn't droop — gravity has been validated via the MuJoCo viewer in Task 1.3)
+
+Pay special attention to **M1 (Shoulder Pitch)** — this was the MVP-1 regression. If M1 is now responsive and smooth, Phase 2 has delivered on the physics debt.
+
+- [ ] **Step 4: Drag M8 (Gripper) slider**
+
+Drag the gripper slider 0 → 1 → 0. Expected:
+- Primary joint and both mimic joints open/close
+- No NaN artifacts (jaws don't disappear or fly apart)
+- Multi-joint visual synchronization via tendon equality
+
+- [ ] **Step 5: Multi-motor simultaneous test**
+
+Drag M1 + M4 + M8 at the same time (e.g., open gripper while rotating shoulder while bending elbow). Expected:
+- All 3 motors respond independently
+- No interference between motors
+- Arm motion looks natural (not jittery or physics-broken)
+
+- [ ] **Step 6: Kill + restart test**
+
+Press Ctrl+C to stop the station process. Restart:
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim.yaml --web 0.0.0.0:8889
+```
+
+Expected:
+- Clean startup (no "address already in use")
+- Arm returns to home pose (initial qpos)
+
+- [ ] **Step 7: MuJoCo viewer side-by-side with Menagerie (Ceiling item 8)**
+
+In a separate terminal:
+
+```bash
+python -m mujoco.viewer hardware/elrobot/simulation/elrobot_follower.xml
+```
+
+In another terminal:
+
+```bash
+python -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml
+```
+
+Drag joints in both viewers. Expected:
+- ElRobot's response quality ≈ Menagerie SO-ARM100 quality
+- No obvious "ours is worse" artifacts (no extra jitter, no weird motions, no obviously-wrong physics)
+
+If the ElRobot viewer looks materially worse than Menagerie's: record the specific difference (e.g., "M1 oscillates when released in ElRobot but not in Menagerie"). This is **advisory** at Phase 2 gate — Floor §3.1 is the hard gate. If Ceiling §3.2 item 8 fails, record as a follow-up investigation but don't block MVP-2 completion.
+
+- [ ] **Step 8: Record results**
+
+In `/tmp/phase2_smoke_results.txt`:
+- Date + time
+- Which motors passed Step 3 (1-8 checklist)
+- Whether gripper (Step 4) worked
+- Whether multi-motor (Step 5) worked
+- Whether kill+restart (Step 6) worked cleanly
+- Visual comparison to Menagerie (Step 7) — match / ElRobot worse / ElRobot better
+- Overall Ceiling §3.2 verdict: PASS / PASS with caveats / FAIL
+
+---
+
+### Task 7.2: Update `sim-server/README.md` manual checklist
+
+**Files:**
+- Modify: `software/sim-server/README.md`
+
+**Rationale:** The MVP-1 README has a scenario A manual smoke test checklist. Replace it with the MVP-2 version that covers the ElRobot 8-motor expectations AND the Menagerie walking skeleton regression check.
+
+- [ ] **Step 1: Read current README to find the checklist section**
+
+```bash
+grep -n 'checklist\|smoke test\|scenario A\|MVP-1' software/sim-server/README.md
+```
+
+- [ ] **Step 2: Replace the checklist section**
+
+Find the "Manual browser smoke test" or similar section in the README. Replace with MVP-2 version:
+
+```markdown
+## Manual browser smoke test (MVP-2)
+
+MVP-2 has two complementary smoke tests:
+
+### Phase 1 baseline — Menagerie walking skeleton
+
+This test validates that the station infrastructure works with any
+MuJoCo-valid MJCF (hypothesis A: "infra is robot-agnostic"). Run
+periodically after any change to station / sim-runtime / bridge code.
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim-menagerie.yaml --web 0.0.0.0:8889
+```
+
+- [ ] Browser shows Menagerie SO-ARM100's N motors (5-6)
+- [ ] Dragging any slider smoothly rotates the corresponding joint
+- [ ] `test_menagerie_walking_skeleton.py` pytest passes
+
+### Phase 2 — ElRobot full 8-motor demo
+
+This is the MVP-2 exit criterion. Validates that ElRobot's sim
+env is usable for future policy training (spec §3.2 Ceiling).
+
+```bash
+./target/debug/station -c software/station/bin/station/station-sim.yaml --web 0.0.0.0:8889
+```
+
+- [ ] Browser connects, shows 8 motors (M1-M8) populated
+- [ ] Drag M1 (Shoulder Pitch) slowly through full range
+  - smooth response, no oscillation, no jitter
+  - arm holds position when slider released (no droop)
+- [ ] Repeat for M2 (Shoulder Roll), M3 (Shoulder Yaw), M4 (Elbow)
+- [ ] Repeat for M5 (Wrist Roll), M6 (Wrist Pitch), M7 (Wrist Yaw)
+- [ ] Drag M8 (Gripper) slider 0 → 1 → 0
+  - mimic jaws open/close in sync
+  - no NaN artifacts
+- [ ] Multi-motor test: drag M1 + M4 + M8 simultaneously, no interference
+- [ ] Kill station, restart, verify arm returns to home pose
+
+### Side-by-side visual comparison (advisory)
+
+```bash
+python -m mujoco.viewer hardware/elrobot/simulation/elrobot_follower.xml
+python -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml
+```
+
+- [ ] ElRobot response quality ≈ Menagerie SO-ARM100 quality
+  (no obvious "ours is worse" artifacts)
+```
+
+(Preserve any other README sections unrelated to the smoke test.)
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add software/sim-server/README.md
+git commit -m "docs(sim-server): update manual smoke checklist for MVP-2"
+```
+
+---
+
+### Task 7.3: Update `sim_starting_point.md` memory for MVP-2 completion
+
+**Files:**
+- Modify: `~/.claude/projects/-home-yuan-proj-norma-core/memory/sim_starting_point.md`
+
+**Rationale:** The memory doc currently says MVP-1 is complete and MVP-2 is pending. Update the relevant sections to reflect MVP-2 completion (assuming all Chunks 1-7 pass).
+
+- [ ] **Step 1: Read current memory state**
+
+Use the Read tool on `~/.claude/projects/-home-yuan-proj-norma-core/memory/sim_starting_point.md`.
+
+- [ ] **Step 2: Apply updates**
+
+Update the following sections:
+
+1. **Top-of-file "交付状态" block**: Change from "MVP-1 已完成" to "MVP-1 + MVP-2 已完成". Add MVP-2 merge commit info.
+
+2. **"执行结果一览" table**: Add MVP-2 row with test counts + chunk list.
+
+3. **"Smoke test 真实结果" section**: Add an MVP-2 subsection noting that the 4-factor debt (forcerange / zero damping / self-collision / gripper near-zero inertia) is resolved by the Menagerie fork. Record specifically:
+   - M1 now responsive (armature from Menagerie)
+   - self-collision gone (primitive collision geometry from Menagerie pattern)
+   - gripper primary joint stable (Menagerie inertial values + armature)
+   - No gravity compensation needed (Menagerie approach works)
+
+4. **"MVP-2 起点" section**: Rename to "MVP-2 完成 + MVP-3 起点" and update the Chunk 1-2 draft into a "Phase 0/1/2 executed" summary. Add MVP-3 outlook (env wrapper, policy training) as the next phase.
+
+5. **"时间线" section**: Add 2026-04-11 + following dates entries for MVP-2 Chunk execution.
+
+6. **"How to apply" section**: Add MVP-2 guidance:
+   - "改 elrobot_follower.xml 前：先跑 test_menagerie_walking_skeleton.py 确认 infra 基线"
+   - "ElRobot 的 Floor §3.1 acceptance 在 test_elrobot_acceptance.py"
+   - "Menagerie 更新的合并流程：see vendor/menagerie/VENDOR.md"
+
+- [ ] **Step 3: Save (no git commit — memory is outside the repo)**
+
+Memory files live in `~/.claude/` and are not under git control. Just save the file via the Write tool.
+
+---
+
+### Task 7.4: Final MVP-2 DoD verification (spec §3.4)
+
+**Files:** None (verification)
+
+**Rationale:** Spec §3.4 lists 10 Definition-of-Done items for MVP-2. Verify each and record.
+
+- [ ] **Step 1: Go through spec §3.4 exit criteria**
+
+For each of the 10 items:
+
+1. Phase 0 reconnaissance gate passed (Chunk 1 Task 1.1-1.3)
+2. Phase 1 walking skeleton green (Chunk 4 Task 4.4-4.5)
+3. Phase 2 ElRobot 8 motor operational (Chunk 7 Task 7.1)
+4. Floor §3.1 (6 criteria) all automated tests pass (Chunk 6 Task 6.1-6.2)
+5. Ceiling §3.2 (2 criteria) manual verified (Chunk 7 Task 7.1)
+6. 143 tests (or more after migration) green (Chunk 6 Task 6.2 gate)
+7. `make check-arch-invariants` passes (Chunk 6 Task 6.2)
+8. Rust clippy zero new warnings (run `cargo clippy -p sim-runtime -p st3215-wire -p st3215-compat-bridge -p station_iface --all-targets` and confirm)
+9. spec + plan + comparison table committed to main (Chunks 5 Task 5.1 + plan commits)
+10. `sim_starting_point.md` reflects MVP-2 completion (Task 7.3)
+
+For each, mark ✅ or ❌ and list any unmet items.
+
+- [ ] **Step 2: Run the final verification commands**
+
+```bash
+# Tests
+make sim-test 2>&1 | tail -5
+
+# Clippy
+cargo clippy -p sim-runtime -p st3215-wire -p st3215-compat-bridge -p station_iface --all-targets 2>&1 | grep -c '^warning:' || echo "0 warnings"
+
+# Arch invariants
+make check-arch-invariants
+
+# Git log shows all MVP-2 commits
+git log --oneline $(git merge-base HEAD main 2>/dev/null || git log --format=%H | tail -1)..HEAD | head -50
+```
+
+Record counts in `/tmp/mvp2_dod_summary.txt`.
+
+- [ ] **Step 3: If any DoD item fails, STOP and fix**
+
+If items 1-10 are not all ✅, MVP-2 is not complete. Return to the failing chunk and iterate.
+
+- [ ] **Step 4: Commit a final "MVP-2 complete" note commit**
+
+Only after all 10 DoD items pass:
+
+```bash
+# An empty commit marking the milestone is acceptable, but it's more useful
+# to pair it with a small doc update (e.g., bumping a VERSION file if any).
+# If no files need changing, skip this step — the git log itself is the record.
+
+git log --oneline -20 > /tmp/mvp2_final_log.txt
+```
+
+Read `/tmp/mvp2_final_log.txt` and confirm the chain of commits from Chunks 1-7 is coherent.
+
+---
+
+### Task 7.5: MVP-2 completion summary
+
+**Files:** None (documentation)
+
+At the end of Chunk 7:
+
+1. ✅ All 7 chunks executed to their gate
+2. ✅ Manual Phase 2 smoke test passed (Task 7.1)
+3. ✅ `sim-server/README.md` has MVP-2 checklist (Task 7.2)
+4. ✅ `sim_starting_point.md` memory reflects MVP-2 done (Task 7.3)
+5. ✅ Spec §3.4 DoD 10 items all ✅ (Task 7.4)
+6. ✅ Final `make sim-test` + clippy clean
+7. ✅ M1 physics debt from MVP-1 is resolved — Menagerie parameters + armature were the correct fix, gravity compensation is NOT required
+8. ✅ `test_menagerie_walking_skeleton.py` remains green as permanent regression
+9. ✅ URDF → MJCF pipeline is permanently retired (gen.py deleted)
+10. ✅ ElRobot sim is ready for MVP-3 (env wrapper / policy training)
+
+**MVP-2 is complete.** Subagent-driven-development or executing-plans handoff: report completion, offer to invoke `superpowers:finishing-a-development-branch` if this execution was run on a worktree.
+
