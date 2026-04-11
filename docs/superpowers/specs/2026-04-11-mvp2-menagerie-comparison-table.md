@@ -88,6 +88,32 @@ structural, not a count of extra revolute joints.)*
    `forcerange="-3.5 3.5"`) 作为 ElRobot 所有关节的 baseline。若 Phase 2 smoke test 过不了
    Floor 4 step response，允许 per-joint 微调 kp，但 **armature 必须保持 Menagerie 值 0.1**。
 
+   **dampratio vs kv 术语澄清**: Menagerie 的 `<position>` 不用 `kv`，用 `dampratio="1"`。
+   plan 的 Task 5.2 Step 4 template 写的 `kv="{menagerie kv}"` 是 placeholder 命名，**不是要加
+   `kv` 属性**。实际应该写成 `<position kp="50" dampratio="1" forcerange="..."/>`。
+   `dampratio="1"` 表示临界阻尼 (critical damping)，MuJoCo 会根据 actuator 驱动的 joint
+   的惯量自动算出等效 damping 系数——不需要手动算 kv。
+
+   **forcerange 政策：Phase 2 使用 URDF effort，不是 Menagerie ±3.5**. Menagerie `<default>`
+   的 `forcerange="-3.5 3.5"` 是任意仿真值，ElRobot URDF 的 `<limit effort="2.94">` 是
+   ST3215 servo datasheet 的实测额定扭矩。物理保真度 > 仿真默认值，所以 Phase 2 每个
+   `<position>` 应写 `forcerange="-2.94 2.94"` (URDF effort × 符号对)。这也符合 plan Task
+   5.2 Step 4 template 的 `forcerange="{-urdf effort} {urdf effort}"`。如果 Floor 4 step
+   response 因为扭矩不够过不了，允许临时调到 Menagerie 值 ±3.5 **但必须在 CHANGELOG 记下
+   deviation 原因**（例如"M3 需要更多扭矩克服重力"）。
+
+   **ctrlrange = joint range (from URDF)**: 表中 ElRobot 行的 "range (rad)" 列直接就是每个
+   `<position>` 的 `ctrlrange` 值。例如 rev_motor_01 range=[-1.5509, 1.5509]，actuator 应写
+   `ctrlrange="-1.5509 1.5509"`。
+
+   **actuator ctrlrange 写法：显式 `ctrlrange`，NOT `inheritrange="1"`**. Menagerie 的
+   actuator block 用 `inheritrange="1"` 让 MuJoCo 从 joint range 自动继承 ctrlrange，这依赖
+   Menagerie 的 `<default class="so_arm100">` 里 actuator 和 joint 共享同一个 class tree。
+   ElRobot 的 MJCF 是从 Menagerie fork 参数但**重新构建** body tree（URDF kinematics 不同），
+   class 继承关系不一定一致。为避免 `inheritrange` 找不到合法父 class 而编译错误，Phase 2
+   每个 actuator **显式写 `ctrlrange`**（从上面的 range 列复制），不用 `inheritrange`。
+   这也让 ctrlrange 审计更直观。
+
 4. **Gripper mimic**: Menagerie 使用 plain single-DOF revolute joint `Jaw` + `<position>`
    actuator（在 Chunk 1 + Chunk 4 中已确认，无 tendon / equality / weld）。ElRobot 的 gripper
    结构不同 — 保留 MVP-1 的 `<tendon><fixed>` + `<equality><tendon>` mimic 结构（2 个 mimic
