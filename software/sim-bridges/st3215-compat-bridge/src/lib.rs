@@ -66,7 +66,7 @@ impl BridgeHandle {
 /// existing `ensure_queue_exists_for_write`).
 pub async fn start_st3215_compat_bridge(
     normfs: Arc<NormFS>,
-    _engine: Arc<dyn StationEngine>,
+    engine: Arc<dyn StationEngine>,
     sim_runtime: Arc<SimulationRuntime>,
     config: St3215CompatBridgeConfig,
 ) -> Result<Arc<BridgeHandle>, BridgeError> {
@@ -104,6 +104,7 @@ pub async fn start_st3215_compat_bridge(
 
     let state_handle = state_task::spawn_state_task(
         normfs.clone(),
+        engine.clone(),
         sim_runtime.clone(),
         actuator_map.clone(),
         config.robot_id.clone(),

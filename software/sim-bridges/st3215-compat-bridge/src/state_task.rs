@@ -14,6 +14,8 @@ use normfs::NormFS;
 use prost::Message;
 use sim_runtime::proto::{ActuatorState, WorldSnapshot};
 use sim_runtime::SimulationRuntime;
+use station_iface::iface_proto::drivers::QueueDataType;
+use station_iface::StationEngine;
 use st3215::st3215_proto::{
     inference_state::{BusState, MotorState},
     InferenceState, St3215Bus,
@@ -27,6 +29,7 @@ pub(crate) const INFERENCE_QUEUE_ID: &str = "st3215/inference";
 
 pub async fn spawn_state_task(
     normfs: Arc<NormFS>,
+    engine: Arc<dyn StationEngine>,
     sim_runtime: Arc<SimulationRuntime>,
     actuator_map: Arc<ActuatorMap>,
     robot_id: String,
@@ -37,6 +40,14 @@ pub async fn spawn_state_task(
         .ensure_queue_exists_for_write(&inference_qid)
         .await
         .map_err(|e| BridgeError::NormfsSubscribe(format!("inference queue: {:?}", e)))?;
+
+    // CRITICAL: register the queue with Station's inference aggregator
+    // (mirrors `software/drivers/st3215/src/driver.rs:54-59`). Without
+    // this, Station's `Inference` module never subscribes to our queue,
+    // never includes our bridge's writes in the `InferenceRx` published
+    // to `inference-states`, and the web UI's `inferenceState.st3215`
+    // field stays empty — triggering the "connect a robot" empty state.
+    engine.register_queue(&inference_qid, QueueDataType::QdtSt3215Inference, vec![]);
 
     let mut snapshot_rx = sim_runtime.subscribe_snapshots();
     let handle = tokio::spawn(async move {
