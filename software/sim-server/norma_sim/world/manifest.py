@@ -1,6 +1,6 @@
 """World manifest loader.
 
-Parses `hardware/elrobot/simulation/elrobot_follower.scene.yaml`
+Parses `hardware/elrobot/simulation/manifests/norma/elrobot_follower.scene.yaml`
 (hand-written, edited by humans) into an immutable dataclass tree.
 """
 from __future__ import annotations

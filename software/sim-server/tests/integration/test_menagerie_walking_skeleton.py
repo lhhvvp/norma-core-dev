@@ -31,7 +31,7 @@ def menagerie_walking_skeleton_yaml() -> Path:
     here = Path(__file__).resolve()
     # parents: [0]=tests/integration, [1]=tests, [2]=sim-server, [3]=software, [4]=repo
     repo_root = here.parents[4]
-    p = repo_root / "hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml"
+    p = repo_root / "hardware/elrobot/simulation/manifests/norma/menagerie_so_arm100.scene.yaml"
     if not p.exists():
         pytest.skip(
             f"Menagerie scene yaml not found at {p}; run Chunk 4 Task 4.1 first"

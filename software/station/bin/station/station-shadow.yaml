@@ -15,7 +15,7 @@ sim-runtime:
     - -m
     - norma_sim
     - --manifest
-    - hardware/elrobot/simulation/elrobot_follower.scene.yaml
+    - hardware/elrobot/simulation/manifests/norma/elrobot_follower.scene.yaml
     - --physics-hz
     - "500"
     - --publish-hz

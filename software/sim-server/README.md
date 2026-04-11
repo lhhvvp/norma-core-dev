@@ -27,7 +27,7 @@ PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/
 
 ```bash
 PYTHONPATH=software/sim-server python3 -m norma_sim \
-    --manifest hardware/elrobot/simulation/elrobot_follower.scene.yaml \
+    --manifest hardware/elrobot/simulation/manifests/norma/elrobot_follower.scene.yaml \
     --socket /tmp/norma-sim-dev.sock \
     --physics-hz 500 \
     --publish-hz 100
@@ -112,7 +112,7 @@ WebSocket server listening on 0.0.0.0:8889
 In separate terminals:
 
 ```bash
-python3 -m mujoco.viewer hardware/elrobot/simulation/elrobot_follower.xml
+python3 -m mujoco.viewer hardware/elrobot/simulation/mujoco/elrobot_follower/elrobot_follower.xml
 python3 -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml
 ```
 
@@ -139,9 +139,9 @@ are the hard gate for MVP-2.
   Check station logs for `st3215_compat_bridge bridge started`.
 - **Gripper sliders move but the jaws don't** → tendon equality regression
   on the P0 gripper mimic. Run
-  `pytest software/sim-server/tests/world/test_mimic_gripper.py -v`
+  `pytest hardware/elrobot/simulation/mujoco/elrobot_follower/tests/test_mimic_gripper.py -v`
   and inspect the `<tendon>` + `<equality>` blocks in
-  `hardware/elrobot/simulation/elrobot_follower.xml`.
+  `hardware/elrobot/simulation/mujoco/elrobot_follower/elrobot_follower.xml`.
 
 ## Architecture
 

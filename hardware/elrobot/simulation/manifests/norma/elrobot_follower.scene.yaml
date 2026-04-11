@@ -6,7 +6,7 @@
 
 world_name: elrobot_follower
 robot_id: elrobot_follower
-mjcf_path: ./elrobot_follower.xml
+mjcf_path: ../../mujoco/elrobot_follower/elrobot_follower.xml
 
 # No scene_overrides — elrobot_follower.xml's <option> is authoritative.
 # No scene_extras — the MJCF has its own lighting/floor setup.

@@ -1,0 +1,80 @@
+# robot.yaml — canonical identity for the ElRobot follower arm physics model.
+#
+# This file is the machine-readable index intended for:
+# - LeRobot Dataset v3 `robot_type` field (future integration)
+# - Any registry tooling that needs a stable robot ID
+# - Programmatic discovery of the MJCF and its metadata
+#
+# When the content here disagrees with README.md or CHANGELOG.md, this file
+# wins (it is the source of truth for automated consumers). Prose files
+# should mirror the values here, not the other way around.
+
+robot:
+  id: elrobot_follower
+  display_name: ElRobot Follower Arm
+  variant: default
+  license: Apache-2.0
+  source_org: norma-core
+  # Future: bump this when the robot package is published to a registry.
+  registry_uri: null
+
+kinematics:
+  total_dof: 10   # 8 actuated joints + 2 mimic slides (gripper)
+  actuated_dof: 8
+  revolute_actuators: 7
+  gripper_actuators: 1
+  gripper_type: tendon_mimic_parallel
+  gripper_mimic_joints:
+    - rev_motor_08_1
+    - rev_motor_08_2
+  gripper_mimic_multipliers:
+    - -0.0115
+    - 0.0115
+
+actuators:
+  count: 8
+  mjcf_names:
+    - act_motor_01
+    - act_motor_02
+    - act_motor_03
+    - act_motor_04
+    - act_motor_05
+    - act_motor_06
+    - act_motor_07
+    - act_motor_08
+  # Client-facing actuator_id as used by the st3215-compat bridge and
+  # surfaced in the Norma scene yaml's actuator_annotations remap.
+  client_ids:
+    - rev_motor_01
+    - rev_motor_02
+    - rev_motor_03
+    - rev_motor_04
+    - rev_motor_05
+    - rev_motor_06
+    - rev_motor_07
+    - rev_motor_08
+
+physics_baseline:
+  origin: mujoco_menagerie/trs_so_arm100
+  origin_commit: c771fb04055d805f20db0eab6cb20b67555887d0
+  origin_date: "2025-06-09"
+  # Flag flips to true once real-hardware sysID data replaces Menagerie-
+  # inherited parameters. Future chunks should gate this flip on a specific
+  # measurement corpus landing in measurements/sysid/.
+  sysid_complete: false
+
+version:
+  current: "0.1.0"
+  changelog: CHANGELOG.md
+  version_file: VERSION
+
+upstream:
+  # Candidate upstream destination; not yet engaged.
+  candidate: mujoco_menagerie
+  prerequisites:
+    - LICENSE file present (done at 0.1.0)
+    - sysid_complete == true
+    - Full CITATION.cff metadata
+    - scene.xml wrapper with lights/floor (Menagerie convention)
+    - Passing tests executable in isolation (no norma_sim dependency)
+  engaged: false

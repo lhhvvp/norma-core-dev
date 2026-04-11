@@ -12,7 +12,7 @@
 # prove the infra is still sound and the problem is ElRobot-specific.
 
 world_name: menagerie_trs_so_arm100
-mjcf_path: ./vendor/menagerie/trs_so_arm100/scene.xml
+mjcf_path: ../../vendor/menagerie/trs_so_arm100/scene.xml
 # No scene_overrides — Menagerie's <option> block is authoritative.
 # No scene_extras — Menagerie's scene.xml already has lights + floor.
 # No actuator_annotations — auto-synthesize all <position> actuators as

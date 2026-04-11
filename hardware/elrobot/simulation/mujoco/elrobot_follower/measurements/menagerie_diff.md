@@ -5,7 +5,7 @@
 | **日期** | 2026-04-12 |
 | **状态** | Phase 2 research spike 产物 |
 | **Menagerie source** | mujoco_menagerie/trs_so_arm100 @ commit `c771fb04055d805f20db0eab6cb20b67555887d0` |
-| **Target** | hardware/elrobot/simulation/elrobot_follower.xml |
+| **Target** | hardware/elrobot/simulation/mujoco/elrobot_follower/elrobot_follower.xml |
 
 ## 拓扑对照
 

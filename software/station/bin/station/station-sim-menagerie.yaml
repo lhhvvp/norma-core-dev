@@ -10,7 +10,7 @@
 # robot-agnostic — it runs any MuJoCo-valid MJCF with any actuator topology
 # without Rust changes. This file is the station-level entry point for that
 # proof; the corresponding sim / bridge config files are:
-#   hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml  (Task 4.1)
+#   hardware/elrobot/simulation/manifests/norma/menagerie_so_arm100.scene.yaml  (Task 4.1)
 #   software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml  (Task 4.2)
 #
 # This file is a PERMANENT REGRESSION FIXTURE: it stays in the repo after
@@ -26,7 +26,7 @@ sim-runtime:
     - -m
     - norma_sim
     - --manifest
-    - hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml
+    - hardware/elrobot/simulation/manifests/norma/menagerie_so_arm100.scene.yaml
     - --physics-hz
     - "500"
     - --publish-hz

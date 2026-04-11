@@ -58,7 +58,7 @@ sim-run:
 .PHONY: sim-standalone
 sim-standalone:
 	PYTHONPATH=$(SIM_PYTHONPATH) python3 -m norma_sim \
-	  --manifest hardware/elrobot/simulation/elrobot_follower.scene.yaml \
+	  --manifest hardware/elrobot/simulation/manifests/norma/elrobot_follower.scene.yaml \
 	  --socket /tmp/norma-sim-dev.sock \
 	  --physics-hz 500 \
 	  --publish-hz 100
@@ -76,7 +76,9 @@ sim-test: check-arch-invariants
 	cargo test -p st3215-wire
 	cargo test -p sim-runtime
 	cargo test -p st3215-compat-bridge
-	PYTHONPATH=$(SIM_PYTHONPATH) python3 -m pytest software/sim-server/tests/
+	PYTHONPATH=$(SIM_PYTHONPATH) python3 -m pytest \
+	    software/sim-server/tests/ \
+	    hardware/elrobot/simulation/mujoco/elrobot_follower/tests/
 
 # Architecture invariants enforced by grep. These MUST pass before any
 # sim-related PR is merged — they encode the v2 architectural boundaries
