@@ -14,21 +14,21 @@ except Exception as e:  # pragma: no cover
 pytestmark = pytest.mark.skipif(not _OK, reason=f"scheduler imports failed: {_ERR}")
 
 
-def test_scheduler_pacing_500hz(world_yaml_path):
+def test_scheduler_pacing_500hz(menagerie_scene_yaml):
     """Running the scheduler for 200 ms wall should produce about
     100 physics ticks at 500 Hz with ±20% tolerance (generous because
     CI schedulers vary)."""
-    world = MuJoCoWorld.from_manifest_path(world_yaml_path)
+    world = MuJoCoWorld.from_manifest_path(menagerie_scene_yaml)
     sched = RealTimeScheduler(world, physics_hz=500, publish_hz=100)
     sched.run_for(0.2)
     # Expected ≈ 100 ticks; tolerance ±25 ticks.
     assert 75 <= sched.tick <= 150, f"tick count out of window: {sched.tick}"
 
 
-def test_scheduler_publish_callback_frequency(world_yaml_path):
+def test_scheduler_publish_callback_frequency(menagerie_scene_yaml):
     """At physics_hz=500 and publish_hz=100, on_publish should fire
     roughly once every 5 physics ticks."""
-    world = MuJoCoWorld.from_manifest_path(world_yaml_path)
+    world = MuJoCoWorld.from_manifest_path(menagerie_scene_yaml)
     published = []
     sched = RealTimeScheduler(
         world,
@@ -44,8 +44,8 @@ def test_scheduler_publish_callback_frequency(world_yaml_path):
         assert t % 5 == 0
 
 
-def test_scheduler_rejects_bad_ratios(world_yaml_path):
-    world = MuJoCoWorld.from_manifest_path(world_yaml_path)
+def test_scheduler_rejects_bad_ratios(menagerie_scene_yaml):
+    world = MuJoCoWorld.from_manifest_path(menagerie_scene_yaml)
     with pytest.raises(ValueError):
         RealTimeScheduler(world, physics_hz=0)
     with pytest.raises(ValueError):
@@ -54,11 +54,11 @@ def test_scheduler_rejects_bad_ratios(world_yaml_path):
         RealTimeScheduler(world, physics_hz=500, publish_hz=1000)
 
 
-def test_scheduler_stop_exits_run_forever(world_yaml_path):
+def test_scheduler_stop_exits_run_forever(menagerie_scene_yaml):
     """run_for sets a watchdog that calls stop() — so the loop must
     actually observe it within a few ms."""
     import time
-    world = MuJoCoWorld.from_manifest_path(world_yaml_path)
+    world = MuJoCoWorld.from_manifest_path(menagerie_scene_yaml)
     sched = RealTimeScheduler(world, physics_hz=500, publish_hz=100)
     t0 = time.monotonic()
     sched.run_for(0.1)

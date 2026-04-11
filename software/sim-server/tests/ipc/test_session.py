@@ -72,11 +72,11 @@ def _fake_descriptor(name: str) -> "WorldDescriptor":
     )
 
 
-def test_session_handshake_happy_path(world_yaml_path):
+def test_session_handshake_happy_path(menagerie_scene_yaml):
     async def _inner():
         cr, cw, sr, sw, cleanup = await _pair()
         try:
-            manifest = load_manifest(world_yaml_path)
+            manifest = load_manifest(menagerie_scene_yaml)
             actuations = []
             session = ClientSession(
                 reader=sr,
@@ -118,11 +118,11 @@ def test_session_handshake_happy_path(world_yaml_path):
     _run(_inner())
 
 
-def test_session_handshake_wrong_version(world_yaml_path):
+def test_session_handshake_wrong_version(menagerie_scene_yaml):
     async def _inner():
         cr, cw, sr, sw, cleanup = await _pair()
         try:
-            manifest = load_manifest(world_yaml_path)
+            manifest = load_manifest(menagerie_scene_yaml)
             session = ClientSession(
                 reader=sr,
                 writer=sw,
@@ -162,14 +162,14 @@ def test_session_handshake_wrong_version(world_yaml_path):
     _run(_inner())
 
 
-def test_session_handshake_missing_hello(world_yaml_path):
+def test_session_handshake_missing_hello(menagerie_scene_yaml):
     """A client that sends something other than Hello as first
     frame must receive an Error and be rejected."""
 
     async def _inner():
         cr, cw, sr, sw, cleanup = await _pair()
         try:
-            manifest = load_manifest(world_yaml_path)
+            manifest = load_manifest(menagerie_scene_yaml)
             session = ClientSession(
                 reader=sr,
                 writer=sw,
