@@ -22,7 +22,7 @@ def _revolute() -> ActuatorManifest:
     return ActuatorManifest(
         actuator_id="rev_motor_01",
         display_name="Test",
-        urdf_joint="rev_motor_01",
+        mjcf_joint="rev_motor_01",
         mjcf_actuator="act_motor_01",
         capability=ActuatorCapability(kind="REVOLUTE_POSITION"),
         actuator_gains={"kp": 15.0, "kv": 0.5},
@@ -33,7 +33,7 @@ def _gripper() -> ActuatorManifest:
     return ActuatorManifest(
         actuator_id="rev_motor_08",
         display_name="Gripper",
-        urdf_joint="rev_motor_08",
+        mjcf_joint="rev_motor_08",
         mjcf_actuator="act_motor_08",
         capability=ActuatorCapability(kind="GRIPPER_PARALLEL"),
         actuator_gains={"kp": 10.0, "kv": 0.3},

@@ -8,12 +8,12 @@ before Chunk 7's bridge reports anything wrong.
 import mujoco
 
 
-def test_mimic_gripper_equality_works(mjcf_path):
+def test_mimic_gripper_equality_works(elrobot_mjcf_path):
     """Driving rev_motor_08 to 1.0 rad should move both mimic joints
     by approximately ±0.0115 (in metres — the mimic joints are
     prismatic and `0.0115 m/rad` is the ElRobot mimic multiplier).
     """
-    model = mujoco.MjModel.from_xml_path(str(mjcf_path))
+    model = mujoco.MjModel.from_xml_path(str(elrobot_mjcf_path))
     data = mujoco.MjData(model)
 
     act8 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "act_motor_08")
@@ -52,9 +52,9 @@ def test_mimic_gripper_equality_works(mjcf_path):
     )
 
 
-def test_mimic_gripper_zero_setpoint_holds_zero(mjcf_path):
+def test_mimic_gripper_zero_setpoint_holds_zero(elrobot_mjcf_path):
     """Sanity: with ctrl=0 the mimic joints stay near 0."""
-    model = mujoco.MjModel.from_xml_path(str(mjcf_path))
+    model = mujoco.MjModel.from_xml_path(str(elrobot_mjcf_path))
     data = mujoco.MjData(model)
 
     act8 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "act_motor_08")
