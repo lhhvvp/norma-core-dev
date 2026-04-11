@@ -2387,6 +2387,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "st3215-compat-bridge"
+version = "0.1.0-beta.2"
+dependencies = [
+ "bytes",
+ "log",
+ "normfs",
+ "prost",
+ "serde",
+ "serde_yaml",
+ "sim-runtime",
+ "st3215",
+ "st3215-wire",
+ "station_iface",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "st3215-wire"
 version = "0.1.0"
 dependencies = [
