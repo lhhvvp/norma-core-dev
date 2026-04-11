@@ -97,10 +97,36 @@ async def _async_main(args: argparse.Namespace) -> int:
         descriptor=descriptor,
         on_actuation=on_actuation,
     )
-    await server.start()
 
+    # Install the asyncio signal handlers BEFORE binding the UDS so
+    # that a SIGTERM arriving between `server.start()` and the
+    # `_request_stop_event.wait()` below cannot kill the process
+    # before `server.stop()` has a chance to unlink the socket. The
+    # physics thread hasn't been spawned yet either; the handler
+    # safely sets a flag and the cleanup path runs on the main loop.
     stopping = threading.Event()
     loop_stopped = threading.Event()
+    _request_stop_event = asyncio.Event()
+
+    def _handle_signal(*_: object) -> None:
+        log.info("received shutdown signal")
+        stopping.set()
+        try:
+            loop.call_soon_threadsafe(_request_stop_event.set)
+        except RuntimeError:
+            pass
+
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal)
+            except NotImplementedError:
+                # Windows — fallback to default handler
+                pass
+    except RuntimeError:
+        pass
+
+    await server.start()
 
     def publish_cb(tick: int) -> None:
         clock = WorldClock(
@@ -128,30 +154,13 @@ async def _async_main(args: argparse.Namespace) -> int:
             scheduler.run_forever()
         finally:
             loop_stopped.set()
-            loop.call_soon_threadsafe(_request_stop_event.set)
+            try:
+                loop.call_soon_threadsafe(_request_stop_event.set)
+            except RuntimeError:
+                pass
 
-    _request_stop_event = asyncio.Event()
     t = threading.Thread(target=physics_thread, name="sim-physics", daemon=True)
     t.start()
-
-    def _handle_signal(*_: object) -> None:
-        log.info("received shutdown signal")
-        stopping.set()
-        scheduler.stop()
-        try:
-            loop.call_soon_threadsafe(_request_stop_event.set)
-        except RuntimeError:
-            pass
-
-    try:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, _handle_signal)
-            except NotImplementedError:
-                # Windows — fallback to default handler
-                pass
-    except RuntimeError:
-        pass
 
     try:
         await _request_stop_event.wait()
