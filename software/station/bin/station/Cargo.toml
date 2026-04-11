@@ -16,6 +16,8 @@ usbvideo = { path = "../../../drivers/usbvideo" }
 sysinfod = { path = "../../../drivers/sysinfod" }
 motors-mirroring = { path = "../../../drivers/motors-mirroring" }
 inferences = { path = "../../../drivers/inferences" }
+sim-runtime = { path = "../../../sim-runtime" }
+st3215-compat-bridge = { path = "../../../sim-bridges/st3215-compat-bridge" }
 log = { workspace = true }
 env_logger = "0.10"
 bytes = { workspace = true }
