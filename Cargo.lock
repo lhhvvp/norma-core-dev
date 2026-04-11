@@ -2451,9 +2451,11 @@ dependencies = [
  "sim-runtime",
  "st3215",
  "st3215-compat-bridge",
+ "st3215-wire",
  "station_iface",
  "sysinfod",
  "systime",
+ "tempfile",
  "tokio",
  "usbvideo",
 ]
