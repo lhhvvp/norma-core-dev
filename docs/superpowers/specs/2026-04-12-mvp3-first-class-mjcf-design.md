@@ -438,14 +438,24 @@ at the new `models/` paths. The changes are mechanical substitutions of
 | 6 | `software/sim-server/scripts/probe_manifest.py` | usage example in module docstring |
 | 7 | `software/sim-server/tests/conftest.py` | `elrobot_mjcf_path` and `elrobot_scene_yaml` fixtures (two path assignments) |
 
-**Load-bearing note on item 7**: Three test files in `software/sim-server/tests/world/`
-(`test_model.py`, `test_snapshot.py`, `test_descriptor_build.py`) still use
-the `elrobot_scene_yaml` / `elrobot_mjcf_path` fixtures from the old
-`conftest.py`. These three test files are NOT moving in this chunk, so the
-old `conftest.py` must keep its fixture definitions with updated paths. The
-same fixture is therefore defined in two places (old and new `conftest.py`),
-each pointing at the new `models/` location. This duplication was approved
-during the brainstorming Q4 decision.
+**Load-bearing note on item 7**: **Four** test files in
+`software/sim-server/tests/world/` still use the `elrobot_scene_yaml` /
+`elrobot_mjcf_path` fixtures from the old `conftest.py`:
+
+1. `test_model.py`
+2. `test_snapshot.py`
+3. `test_descriptor_build.py`
+4. `test_actuation.py`
+
+(Note: `test_mimic_gripper.py` — the fifth `world/` file that currently
+uses `elrobot_mjcf_path` — is moving out in this chunk, which is why it
+is not counted here.)
+
+These four test files are NOT moving in this chunk, so the old
+`conftest.py` must keep its fixture definitions with updated paths. The
+same fixture is therefore defined in two places (old and new
+`conftest.py`), each pointing at the new `models/` location. This
+duplication was approved during the brainstorming Q4 decision.
 
 ### 4.5 Makefile `sim-test` target update
 
@@ -540,15 +550,27 @@ Expected: **6 passed**. This test is not moved and must remain green.
 ### 5.6 No dangling references to old paths
 
 ```bash
-grep -rn 'hardware/elrobot/simulation/elrobot_follower\|hardware/elrobot/simulation/elrobot_follower\.' \
+grep -rn 'hardware/elrobot/simulation/elrobot_follower' \
     software/ hardware/ Makefile docs/ 2>&1 \
-    | grep -v 'docs/superpowers/plans/2026-04-11-mvp2' \
-    | grep -v 'docs/superpowers/specs/2026-04-11-mvp2'
+    | grep -v 'docs/superpowers/.*2026-04-1[01]' \
+    | grep -v 'vendor/menagerie/'
 ```
 
-Expected: **no matches**. The `grep -v` filters exclude historical MVP-2 plan
-and spec files — those are frozen documents that reference the old paths as
-historical fact and are explicitly out of scope for modification.
+Expected: **no matches**. The `grep -v` filters exclude:
+
+- `docs/superpowers/{specs,plans}/2026-04-1{0,1}-*` — both the MVP-1
+  (2026-04-10) and MVP-2 (2026-04-11) historical spec and plan files are
+  frozen documents that reference the old paths as historical fact. Four
+  such files exist: `2026-04-10-simulation-integration-design.md`,
+  `2026-04-10-simulation-integration-v1-driver-shim-archive.md`,
+  `2026-04-10-simulation-integration-mvp1.md`, and
+  `2026-04-11-mvp2-menagerie-walking-skeleton.md`.
+- `hardware/elrobot/simulation/vendor/menagerie/VENDOR.md` — the Menagerie
+  vendor record contains references to the sibling ElRobot MJCF and is
+  part of the vendored snapshot. Out of scope.
+
+If the filtered grep produces any matches, there is a real missing path
+update — investigate before committing.
 
 ### 5.7 Station smoke test (optional)
 
@@ -655,9 +677,11 @@ Additional changes:
   hardware/elrobot/simulation/tests/
 - sim-server/tests/conftest.py: elrobot_* fixture paths updated to models/
   (world/ tests consuming these fixtures stay in sim-server/)
-- 6 files with hardcoded paths repointed: station-sim.yaml, station-shadow.yaml,
+- 7 files with hardcoded paths repointed: station-sim.yaml, station-shadow.yaml,
   Makefile sim-standalone, sim-server README, manifest.py docstring,
-  probe_manifest.py usage
+  probe_manifest.py usage, sim-server tests/conftest.py (the
+  elrobot_mjcf_path / elrobot_scene_yaml fixtures consumed by the four
+  world/ test files that stay in sim-server)
 
 Rationale: "一等公民 MJCF" insight from MVP-2 — the physics model is an
 engineering artifact independent of application code, with its own calibration
