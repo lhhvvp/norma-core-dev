@@ -1,15 +1,8 @@
-"""`python -m norma_sim --manifest <path> ...` entry point.
+"""`python -m norma_sim --manifest <path>` entry point.
 
-Wires together the world loader, scheduler, IpcServer and applier.
-The physics loop runs on a background thread and uses
-`loop.call_soon_threadsafe` to hand off WorldSnapshot broadcasts to
-the asyncio event loop where IpcServer lives.
-
-Shutdown paths:
-  - Ctrl+C (SIGINT) / SIGTERM → handler sets the stopping event,
-    scheduler exits, loop stops.
-  - Sim crash inside the scheduler thread → main loop sees the
-    thread is dead and exits.
+The `--manifest` flag accepts the MVP-2 `.scene.yaml` schema
+(see docs/superpowers/specs/2026-04-11-mvp2-menagerie-walking-skeleton-design.md
+section 8.1). MVP-1's `.world.yaml` schema is no longer supported.
 """
 from __future__ import annotations
 
@@ -29,7 +22,7 @@ from .logging_setup import configure_logging
 from .scheduler.realtime import RealTimeScheduler
 from .world.actuation import ActuationApplier
 from .world.descriptor import build_world_descriptor
-from .world.manifest import load_manifest, verify_source_hash
+from .world.manifest import load_manifest
 from .world.model import MuJoCoWorld
 from .world.snapshot import SnapshotBuilder
 
@@ -40,7 +33,11 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--manifest",
         type=Path,
         required=True,
-        help="Path to world.yaml manifest",
+        help=(
+            "Path to the sim scene config yaml (MVP-2 .scene.yaml schema; "
+            "see spec 2026-04-11-mvp2-menagerie-walking-skeleton-design.md "
+            "section 8.1)."
+        ),
     )
     ap.add_argument(
         "--socket",
@@ -67,7 +64,6 @@ async def _async_main(args: argparse.Namespace) -> int:
     assert socket_path is not None
 
     manifest = load_manifest(args.manifest)
-    verify_source_hash(args.manifest, manifest.mjcf_path)
     log.info(
         "manifest loaded",
         extra={
@@ -79,7 +75,7 @@ async def _async_main(args: argparse.Namespace) -> int:
         },
     )
 
-    world = MuJoCoWorld(manifest, verify_hash=False)
+    world = MuJoCoWorld(manifest)
     descriptor = build_world_descriptor(
         manifest, publish_hz=args.publish_hz, physics_hz=args.physics_hz
     )

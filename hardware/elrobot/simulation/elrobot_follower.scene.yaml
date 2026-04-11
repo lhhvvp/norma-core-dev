@@ -1,0 +1,64 @@
+# MVP-2 Phase 2 — ElRobot scene config.
+#
+# Replaces MVP-1's worlds/elrobot_follower.world.yaml which was both
+# gen.py manifest AND scene config. This file is pure scene config —
+# load the hand-written MJCF and annotate the gripper.
+
+world_name: elrobot_follower
+robot_id: elrobot_follower
+mjcf_path: ./elrobot_follower.xml
+
+# No scene_overrides — elrobot_follower.xml's <option> is authoritative.
+# No scene_extras — the MJCF has its own lighting/floor setup.
+
+actuator_annotations:
+  - mjcf_actuator: act_motor_01
+    actuator_id: rev_motor_01
+    display_name: Shoulder Pitch
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_02
+    actuator_id: rev_motor_02
+    display_name: Shoulder Roll
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_03
+    actuator_id: rev_motor_03
+    display_name: Shoulder Yaw
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_04
+    actuator_id: rev_motor_04
+    display_name: Elbow
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_05
+    actuator_id: rev_motor_05
+    display_name: Wrist Roll
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_06
+    actuator_id: rev_motor_06
+    display_name: Wrist Pitch
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_07
+    actuator_id: rev_motor_07
+    display_name: Wrist Yaw
+    capability:
+      kind: REVOLUTE_POSITION
+  - mjcf_actuator: act_motor_08
+    actuator_id: rev_motor_08
+    display_name: Gripper
+    capability:
+      kind: GRIPPER_PARALLEL
+      limit_min: 0.0
+      limit_max: 1.0
+      effort_limit: 2.94
+      velocity_limit: 4.71
+      normalized_range: [0.0, 1.0]
+    gripper:
+      primary_joint_range_rad: [0.0, 2.2028]
+      mimic_joints:
+        - {joint: rev_motor_08_1, multiplier: -0.0115}
+        - {joint: rev_motor_08_2, multiplier: 0.0115}

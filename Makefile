@@ -42,11 +42,6 @@ clean:
 
 all: build-all
 
-# Regenerate MJCF from world.yaml manifest + URDF. Run after editing either.
-.PHONY: regen-mjcf
-regen-mjcf:
-	python3 hardware/elrobot/simulation/worlds/gen.py
-
 # —— Simulation targets ———————————————————————————————————————————————
 
 # Ubuntu 24.04 enforces PEP 668 on system Python 3.12, so `pip install`
@@ -63,7 +58,7 @@ sim-run:
 .PHONY: sim-standalone
 sim-standalone:
 	PYTHONPATH=$(SIM_PYTHONPATH) python3 -m norma_sim \
-	  --manifest hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml \
+	  --manifest hardware/elrobot/simulation/elrobot_follower.scene.yaml \
 	  --socket /tmp/norma-sim-dev.sock \
 	  --physics-hz 500 \
 	  --publish-hz 100

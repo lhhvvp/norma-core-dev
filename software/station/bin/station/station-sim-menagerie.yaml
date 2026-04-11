@@ -1,0 +1,55 @@
+## Scenario A (Menagerie) — Phase 1 walking skeleton, internal sim only.
+#
+# Station launches a `python3 -m norma_sim` subprocess via sim-runtime's
+# ChildProcessBackend, pointing at the Menagerie trs_so_arm100 scene yaml.
+# The st3215-compat bridge presents the sim as a virtual
+# `sim://menagerie-so-arm100` ST3215 bus, and no real hardware drivers are
+# touched.
+#
+# PURPOSE: Verify that the Rust / IPC / bridge infrastructure is
+# robot-agnostic — it runs any MuJoCo-valid MJCF with any actuator topology
+# without Rust changes. This file is the station-level entry point for that
+# proof; the corresponding sim / bridge config files are:
+#   hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml  (Task 4.1)
+#   software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml  (Task 4.2)
+#
+# This file is a PERMANENT REGRESSION FIXTURE: it stays in the repo after
+# Phase 2 lands the ElRobot MJCF, as the parallel scenario used by
+# test_menagerie_walking_skeleton.py. If the infra regresses for ElRobot
+# only, this file + its tests prove the core stack is still sound.
+
+sim-runtime:
+  enabled: true
+  mode: internal
+  launcher:
+    - python3
+    - -m
+    - norma_sim
+    - --manifest
+    - hardware/elrobot/simulation/menagerie_so_arm100.scene.yaml
+    - --physics-hz
+    - "500"
+    - --publish-hz
+    - "100"
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: default_robot
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/menagerie-so-arm100.yaml
+    legacy-bus-serial: "sim://menagerie-so-arm100"
+
+drivers:
+  st3215:
+    enabled: false
+  system-info: true
+  usb-video:
+    enabled: false
+
+inference:
+  - queue-id: inference/normvla
+    shm: /dev/shm/normvla
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://menagerie-so-arm100"
+    update-interval: 100ms

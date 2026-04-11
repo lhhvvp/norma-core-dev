@@ -1,19 +1,13 @@
-"""World manifest loader + source_hash verification.
+"""World manifest loader.
 
-Parses `hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml`
-(produced and edited by humans) into an immutable dataclass tree and
-verifies that the generated MJCF's embedded `source_hash=sha256:...`
-comment matches `sha256(urdf_bytes + manifest_bytes)`. A mismatch
-means the manifest/URDF were edited but `make regen-mjcf` was not
-re-run; the caller should fail fast with an actionable error.
+Parses `hardware/elrobot/simulation/elrobot_follower.scene.yaml`
+(hand-written, edited by humans) into an immutable dataclass tree.
 """
 from __future__ import annotations
 
-import hashlib
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import yaml
 
@@ -49,7 +43,7 @@ class GripperMeta:
 class ActuatorManifest:
     actuator_id: str
     display_name: str
-    urdf_joint: str
+    mjcf_joint: str
     mjcf_actuator: str
     capability: ActuatorCapability
     actuator_gains: dict
@@ -85,8 +79,8 @@ class WorldManifest:
     world_name: str
     scene: SceneConfig
     robots: tuple  # tuple[RobotManifest, ...]
-    urdf_path: Path
     mjcf_path: Path
+    urdf_path: Optional[Path] = None  # MVP-2: sim no longer consumes URDF
 
 
 # --------------------------------------------------------------------------
@@ -94,46 +88,167 @@ class WorldManifest:
 # --------------------------------------------------------------------------
 
 
+DEFAULT_ROBOT_ID = "default_robot"
+
+
 def load_manifest(manifest_path: Path) -> WorldManifest:
-    """Load and validate a world manifest yaml."""
+    """Load and validate an MVP-2 scene.yaml.
+
+    Schema (see spec §8.1):
+
+        world_name: str               # required
+        mjcf_path: str                # required, relative to the yaml file
+        robot_id: str                 # optional, default='default_robot'
+        scene_overrides:              # optional, overrides MJCF <option>
+          timestep: float
+          gravity: [x, y, z]
+          integrator: str
+          solver: str
+          iterations: int
+        scene_extras:                 # optional, runtime-added worldbody items
+          lights: [...]
+          floor: {...}
+        actuator_annotations:         # optional; only for non-default capabilities
+          - mjcf_actuator: str        # must exist in MJCF
+            actuator_id: str          # id used by bridge + descriptor
+            display_name: str
+            capability:
+              kind: REVOLUTE_POSITION | PRISMATIC_POSITION | GRIPPER_PARALLEL
+              limit_min: float        # optional
+              limit_max: float
+              effort_limit: float
+              velocity_limit: float
+              normalized_range: [lo, hi]   # required when kind=GRIPPER_PARALLEL
+            gripper:                  # required when kind=GRIPPER_PARALLEL
+              primary_joint_range_rad: [lo, hi]
+              mimic_joints:
+                - {joint: str, multiplier: float}
+
+    Actuators in the MJCF that are NOT listed in `actuator_annotations`
+    and are MuJoCo `<position>` type are auto-synthesized as
+    REVOLUTE_POSITION ActuatorManifest entries. `<motor>`, `<velocity>`,
+    or `<general>` actuators without annotation are silently skipped
+    (MVP-2 only ships the REVOLUTE_POSITION default).
+    """
+    manifest_path = Path(manifest_path)  # accept str too, matches MVP-1 duck-typing
     with manifest_path.open() as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(f) or {}
+
+    if "mjcf_path" not in raw:
+        raise ValueError(
+            f"scene.yaml {manifest_path} missing required 'mjcf_path'"
+        )
+    if "world_name" not in raw:
+        raise ValueError(
+            f"scene.yaml {manifest_path} missing required 'world_name'"
+        )
 
     manifest_dir = manifest_path.parent
-    urdf_path = (manifest_dir / raw["urdf_source"]).resolve()
-    mjcf_path = (manifest_dir / raw["mjcf_output"]).resolve()
+    mjcf_path = (manifest_dir / raw["mjcf_path"]).resolve()
+    if not mjcf_path.exists():
+        raise ValueError(
+            f"scene.yaml {manifest_path} references non-existent "
+            f"mjcf_path: {mjcf_path}"
+        )
 
+    # Scene config — overrides MJCF <option>. Defaults match MVP-1 baseline
+    # for backward compatibility when a yaml omits scene_overrides entirely.
+    scene_overrides = raw.get("scene_overrides") or {}
     scene = SceneConfig(
-        timestep=float(raw["scene"]["timestep"]),
-        gravity=tuple(raw["scene"]["gravity"]),
-        integrator=raw["scene"]["integrator"],
-        solver=raw["scene"]["solver"],
-        iterations=int(raw["scene"]["iterations"]),
+        timestep=float(scene_overrides.get("timestep", 0.002)),
+        gravity=tuple(scene_overrides.get("gravity", [0.0, 0.0, -9.81])),
+        integrator=scene_overrides.get("integrator", "RK4"),
+        solver=scene_overrides.get("solver", "Newton"),
+        iterations=int(scene_overrides.get("iterations", 50)),
     )
 
-    robots: list[RobotManifest] = []
-    for r in raw["robots"]:
-        actuators = tuple(_parse_actuator(a) for a in r["actuators"])
-        sensors = tuple(_parse_sensor(s) for s in r.get("sensors", []))
-        robots.append(
-            RobotManifest(
-                robot_id=r["robot_id"],
-                actuators=actuators,
-                sensors=sensors,
+    # Enumerate MJCF actuators → (name, joint_name, type_tag)
+    mjcf_actuators = _enumerate_mjcf_actuators(mjcf_path)
+    mjcf_actuator_names = {name for name, _, _ in mjcf_actuators}
+
+    # Build annotation lookup (keyed by mjcf_actuator name)
+    annotations = raw.get("actuator_annotations") or []
+    annotation_by_name: dict[str, dict] = {}
+    for ann in annotations:
+        if "mjcf_actuator" not in ann:
+            raise ValueError(
+                f"actuator_annotation in {manifest_path} missing "
+                f"required field 'mjcf_actuator'"
             )
-        )
+        mjcf_name = ann["mjcf_actuator"]
+        if mjcf_name not in mjcf_actuator_names:
+            raise ValueError(
+                f"actuator_annotation references mjcf_actuator "
+                f"'{mjcf_name}' but no such actuator exists in "
+                f"{mjcf_path}. Available: {sorted(mjcf_actuator_names)}"
+            )
+        annotation_by_name[mjcf_name] = ann
+
+    # Synthesize ActuatorManifest list. Annotation takes precedence;
+    # otherwise default to REVOLUTE_POSITION for <position> actuators.
+    actuators: list[ActuatorManifest] = []
+    for mjcf_name, joint_name, type_tag in mjcf_actuators:
+        if mjcf_name in annotation_by_name:
+            actuators.append(
+                _parse_annotated_actuator(
+                    annotation_by_name[mjcf_name], joint_name
+                )
+            )
+        elif type_tag == "position":
+            actuators.append(
+                _synthesize_revolute_actuator(mjcf_name, joint_name)
+            )
+        else:
+            # <motor> / <general> / <velocity> without annotation → skip
+            continue
+
+    robots = (
+        RobotManifest(
+            robot_id=raw.get("robot_id", DEFAULT_ROBOT_ID),
+            actuators=tuple(actuators),
+            sensors=(),  # MVP-2 does not consume sensors; deferred per spec §2.3
+        ),
+    )
 
     return WorldManifest(
         world_name=raw["world_name"],
         scene=scene,
-        robots=tuple(robots),
-        urdf_path=urdf_path,
+        robots=robots,
         mjcf_path=mjcf_path,
+        urdf_path=None,
     )
 
 
-def _parse_actuator(raw: dict[str, Any]) -> ActuatorManifest:
-    cap_raw = raw["capability"]
+def _synthesize_revolute_actuator(
+    mjcf_name: str, mjcf_joint: str
+) -> ActuatorManifest:
+    """Default ActuatorManifest for a <position> actuator with no
+    scene.yaml annotation. actuator_id = mjcf_name, display_name humanized.
+    All capability limits left as None (MJCF's ctrlrange / forcerange is
+    the source of truth — downstream code reads them from the MjModel,
+    not from the manifest)."""
+    return ActuatorManifest(
+        actuator_id=mjcf_name,
+        display_name=mjcf_name.replace("_", " ").title(),
+        mjcf_joint=mjcf_joint,
+        mjcf_actuator=mjcf_name,
+        capability=ActuatorCapability(kind="REVOLUTE_POSITION"),
+        actuator_gains={},
+        gripper=None,
+    )
+
+
+def _parse_annotated_actuator(
+    ann: dict, mjcf_joint: str
+) -> ActuatorManifest:
+    """Parse an actuator_annotations entry into ActuatorManifest.
+    `mjcf_joint` is resolved by the caller from MJCF (not from yaml).
+
+    Spec alignment: `normalized_range` lives under `capability:` (not
+    under `gripper:`), matching spec §8.1 yaml example. `primary_joint_range_rad`
+    and `mimic_joints` live under `gripper:`.
+    """
+    cap_raw = ann["capability"]
     cap = ActuatorCapability(
         kind=cap_raw["kind"],
         limit_min=cap_raw.get("limit_min"),
@@ -143,71 +258,96 @@ def _parse_actuator(raw: dict[str, Any]) -> ActuatorManifest:
     )
     gripper: Optional[GripperMeta] = None
     if cap.kind == "GRIPPER_PARALLEL":
-        g_raw = raw.get("gripper")
+        if "normalized_range" not in cap_raw:
+            raise ValueError(
+                f"GRIPPER_PARALLEL capability on '{ann['mjcf_actuator']}' "
+                f"missing 'normalized_range' (should live under capability:)"
+            )
+        normalized_range = tuple(cap_raw["normalized_range"])
+        g_raw = ann.get("gripper")
         if g_raw is None:
             raise ValueError(
-                f"actuator '{raw['actuator_id']}' has capability "
-                f"GRIPPER_PARALLEL but no 'gripper:' metadata"
+                f"actuator_annotation for '{ann['mjcf_actuator']}' has "
+                f"kind GRIPPER_PARALLEL but no 'gripper:' metadata"
             )
         mimic = tuple(
             GripperMimic(joint=m["joint"], multiplier=float(m["multiplier"]))
-            for m in g_raw["mimic_joints"]
+            for m in g_raw.get("mimic_joints", [])
         )
         gripper = GripperMeta(
             primary_joint_range_rad=tuple(g_raw["primary_joint_range_rad"]),
-            normalized_range=tuple(g_raw["normalized_range"]),
+            normalized_range=normalized_range,
             mimic_joints=mimic,
         )
     return ActuatorManifest(
-        actuator_id=raw["actuator_id"],
-        display_name=raw["display_name"],
-        urdf_joint=raw["urdf_joint"],
-        mjcf_actuator=raw["mjcf_actuator"],
+        actuator_id=ann["actuator_id"],
+        display_name=ann["display_name"],
+        mjcf_joint=mjcf_joint,
+        mjcf_actuator=ann["mjcf_actuator"],
         capability=cap,
-        actuator_gains=dict(raw["actuator_gains"]),
+        actuator_gains={},
         gripper=gripper,
     )
 
 
-def _parse_sensor(raw: dict[str, Any]) -> SensorManifest:
-    return SensorManifest(
-        sensor_id=raw["sensor_id"],
-        display_name=raw["display_name"],
-        capability_kind=raw["capability"]["kind"],
-        source=raw.get("source"),
-    )
+def _enumerate_mjcf_actuators(mjcf_path: Path) -> list[tuple[str, str, str]]:
+    """Parse an MJCF file via MuJoCo's compiler (which resolves <include>)
+    and return the actuator list as `(actuator_name, joint_name, type_tag)`
+    tuples.
 
+    `type_tag` values:
+      - "position" — `<position>` actuator: synthesized as REVOLUTE_POSITION
+        when no annotation is provided
+      - "motor"    — `<motor>` actuator: requires explicit annotation
+      - "general"  — `<general>` actuator: requires explicit annotation
+      - "velocity" — `<velocity>` actuator: requires explicit annotation
 
-# --------------------------------------------------------------------------
-# source_hash verification
-# --------------------------------------------------------------------------
-
-
-def verify_source_hash(manifest_path: Path, mjcf_path: Path) -> None:
-    """Raise ValueError if the MJCF's embedded source_hash doesn't
-    match sha256(urdf_bytes + manifest_bytes). Matches the hash
-    written by `hardware/elrobot/simulation/worlds/gen.py`.
+    The type distinction is derived from the gain/bias type enum pair:
+      position: gain=FIXED, bias=AFFINE
+      motor:    gain=FIXED, bias=NONE
+      general:  anything else
     """
-    with manifest_path.open() as f:
-        raw = yaml.safe_load(f)
-    manifest_dir = manifest_path.parent
-    urdf_path = (manifest_dir / raw["urdf_source"]).resolve()
+    import mujoco  # imported lazily so this module stays lightweight
 
-    urdf_bytes = urdf_path.read_bytes()
-    manifest_bytes = manifest_path.read_bytes()
-    expected = hashlib.sha256(urdf_bytes + manifest_bytes).hexdigest()
+    if not mjcf_path.exists():
+        raise FileNotFoundError(f"MJCF not found: {mjcf_path}")
 
-    mjcf_text = mjcf_path.read_text()
-    m = re.search(r"source_hash=sha256:([0-9a-f]{64})", mjcf_text)
-    if m is None:
-        raise ValueError(
-            f"MJCF at {mjcf_path} has no source_hash comment. "
-            f"Run 'make regen-mjcf'."
-        )
-    found = m.group(1)
-    if found != expected:
-        raise ValueError(
-            f"MJCF source_hash mismatch. Run 'make regen-mjcf'.\n"
-            f"  expected: sha256:{expected[:16]}...\n"
-            f"  found:    sha256:{found[:16]}..."
-        )
+    try:
+        model = mujoco.MjModel.from_xml_path(str(mjcf_path))
+    except Exception as e:
+        raise ValueError(f"failed to compile MJCF {mjcf_path}: {e}") from e
+
+    # Resolve enum values via the typed enums (robust to MuJoCo version bumps)
+    gain_fixed = int(mujoco.mjtGain.mjGAIN_FIXED)
+    bias_affine = int(mujoco.mjtBias.mjBIAS_AFFINE)
+    bias_none = int(mujoco.mjtBias.mjBIAS_NONE)
+    joint_trn_type = int(mujoco.mjtTrn.mjTRN_JOINT)
+
+    results: list[tuple[str, str, str]] = []
+    for i in range(model.nu):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
+        if not name:
+            continue  # skip unnamed actuators (rare)
+
+        # Classify actuator type from gain/bias pair
+        gain_type = int(model.actuator_gaintype[i])
+        bias_type = int(model.actuator_biastype[i])
+        if gain_type == gain_fixed and bias_type == bias_affine:
+            type_tag = "position"
+        elif gain_type == gain_fixed and bias_type == bias_none:
+            type_tag = "motor"
+        else:
+            type_tag = "general"
+
+        # Resolve the joint name this actuator controls.
+        # actuator_trntype[i] can be JOINT (1) or other (tendon, site).
+        # actuator_trnid[i, 0] is the joint id when trntype == JOINT.
+        if int(model.actuator_trntype[i]) != joint_trn_type:
+            continue  # non-joint actuators (tendons, sites) are not supported in MVP-2
+        joint_id = int(model.actuator_trnid[i, 0])
+        joint_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+        if not joint_name:
+            continue  # actuator controlling unnamed joint — rare edge case, skip
+
+        results.append((name, joint_name, type_tag))
+    return results

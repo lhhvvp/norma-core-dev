@@ -42,8 +42,8 @@ def _descriptor(name: str) -> "WorldDescriptor":
     )
 
 
-async def _make_server(world_yaml_path, tmp_dir: Path) -> IpcServer:
-    manifest = load_manifest(world_yaml_path)
+async def _make_server(menagerie_scene_yaml, tmp_dir: Path) -> IpcServer:
+    manifest = load_manifest(menagerie_scene_yaml)
     actuations: list = []
     server = IpcServer(
         socket_path=tmp_dir / "sim.sock",
@@ -55,11 +55,11 @@ async def _make_server(world_yaml_path, tmp_dir: Path) -> IpcServer:
     return server
 
 
-def test_server_start_creates_socket(world_yaml_path):
+def test_server_start_creates_socket(menagerie_scene_yaml):
     async def _inner():
         tmp = Path(tempfile.mkdtemp())
         try:
-            server = await _make_server(world_yaml_path, tmp)
+            server = await _make_server(menagerie_scene_yaml, tmp)
             assert (tmp / "sim.sock").exists()
             mode = os.stat(tmp / "sim.sock").st_mode & 0o777
             assert mode == 0o600
@@ -72,11 +72,11 @@ def test_server_start_creates_socket(world_yaml_path):
     _run(_inner())
 
 
-def test_server_accepts_handshake(world_yaml_path):
+def test_server_accepts_handshake(menagerie_scene_yaml):
     async def _inner():
         tmp = Path(tempfile.mkdtemp())
         try:
-            server = await _make_server(world_yaml_path, tmp)
+            server = await _make_server(menagerie_scene_yaml, tmp)
             sock_path = tmp / "sim.sock"
             reader, writer = await asyncio.open_unix_connection(str(sock_path))
             # Client sends Hello
@@ -109,14 +109,14 @@ def test_server_accepts_handshake(world_yaml_path):
     _run(_inner())
 
 
-def test_server_broadcast_fan_out(world_yaml_path):
+def test_server_broadcast_fan_out(menagerie_scene_yaml):
     """Two clients connect, both go through handshake, then server
     broadcasts one snapshot — both clients must receive it."""
 
     async def _inner():
         tmp = Path(tempfile.mkdtemp())
         try:
-            server = await _make_server(world_yaml_path, tmp)
+            server = await _make_server(menagerie_scene_yaml, tmp)
             sock_path = tmp / "sim.sock"
 
             async def _client(name: str):
