@@ -1,77 +1,56 @@
 """Tests for world.manifest loader."""
-from pathlib import Path
-
 import pytest
-import yaml
 
-from norma_sim.world.manifest import (
-    ActuatorCapability,
-    GripperMeta,
-    GripperMimic,
-    WorldManifest,
-    load_manifest,
-)
+from norma_sim.world.manifest import load_manifest
 
 
-def test_manifest_load_happy(world_yaml_path):
-    manifest = load_manifest(world_yaml_path)
-    assert isinstance(manifest, WorldManifest)
-    assert manifest.world_name == "elrobot_follower_empty"
+def test_manifest_load_happy(tmp_path, menagerie_mjcf_path):
+    scene_yaml = tmp_path / "test.scene.yaml"
+    scene_yaml.write_text(
+        f"world_name: happy_world\n"
+        f"mjcf_path: {menagerie_mjcf_path}\n"
+    )
+    manifest = load_manifest(scene_yaml)
+    assert manifest.world_name == "happy_world"
+    assert manifest.mjcf_path == menagerie_mjcf_path.resolve()
     assert len(manifest.robots) == 1
-    robot = manifest.robots[0]
-    assert robot.robot_id == "elrobot_follower"
-    assert len(robot.actuators) == 8
-    # Motor 8 is the gripper with explicit metadata.
-    m8 = robot.actuators[7]
-    assert m8.actuator_id == "rev_motor_08"
-    assert m8.capability.kind == "GRIPPER_PARALLEL"
-    assert m8.gripper is not None
-    assert m8.gripper.primary_joint_range_rad == (0.0, 2.2028)
-    assert len(m8.gripper.mimic_joints) == 2
-    multipliers = sorted(m.multiplier for m in m8.gripper.mimic_joints)
-    assert multipliers == [-0.0115, 0.0115]
+    assert len(manifest.robots[0].actuators) >= 5
 
 
-def test_manifest_scene_config(world_yaml_path):
-    manifest = load_manifest(world_yaml_path)
-    assert manifest.scene.timestep == 0.002
-    assert manifest.scene.integrator == "RK4"
-    assert manifest.scene.solver == "Newton"
-    assert manifest.scene.iterations == 50
+def test_manifest_scene_config(tmp_path, menagerie_mjcf_path):
+    scene_yaml = tmp_path / "test.scene.yaml"
+    scene_yaml.write_text(
+        f"world_name: test\n"
+        f"mjcf_path: {menagerie_mjcf_path}\n"
+        f"scene_overrides:\n"
+        f"  timestep: 0.001\n"
+        f"  gravity: [0, 0, -5]\n"
+        f"  iterations: 100\n"
+    )
+    manifest = load_manifest(scene_yaml)
+    assert manifest.scene.timestep == 0.001
+    assert manifest.scene.gravity == (0, 0, -5)
+    assert manifest.scene.iterations == 100
 
 
-def test_manifest_missing_gripper_fields_raises(tmp_path):
-    """A GRIPPER_PARALLEL capability without a `gripper:` block must
-    raise a clear ValueError so users know how to fix it."""
-    bad = {
-        "world_name": "bad",
-        "urdf_source": "../elrobot_follower.urdf",
-        "mjcf_output": "./out.xml",
-        "scene": {
-            "timestep": 0.002,
-            "gravity": [0, 0, -9.81],
-            "integrator": "RK4",
-            "solver": "Newton",
-            "iterations": 50,
-        },
-        "robots": [
-            {
-                "robot_id": "x",
-                "actuators": [
-                    {
-                        "actuator_id": "rev_motor_08",
-                        "display_name": "Gripper",
-                        "urdf_joint": "rev_motor_08",
-                        "mjcf_actuator": "act_motor_08",
-                        "capability": {"kind": "GRIPPER_PARALLEL"},
-                        "actuator_gains": {"kp": 10.0, "kv": 0.3},
-                        # INTENTIONALLY no 'gripper' block
-                    }
-                ],
-            }
-        ],
-    }
-    p = tmp_path / "bad.yaml"
-    p.write_text(yaml.safe_dump(bad))
-    with pytest.raises(ValueError, match="GRIPPER_PARALLEL"):
-        load_manifest(p)
+def test_manifest_missing_gripper_fields_raises(tmp_path, menagerie_mjcf_path):
+    """GRIPPER_PARALLEL annotation missing the 'gripper:' block raises."""
+    from norma_sim.world.manifest import _enumerate_mjcf_actuators
+    actuators = _enumerate_mjcf_actuators(menagerie_mjcf_path)
+    target_name = actuators[0][0]
+
+    scene_yaml = tmp_path / "bad.scene.yaml"
+    scene_yaml.write_text(
+        f"world_name: test\n"
+        f"mjcf_path: {menagerie_mjcf_path}\n"
+        f"actuator_annotations:\n"
+        f"  - mjcf_actuator: {target_name}\n"
+        f"    actuator_id: bad_gripper\n"
+        f"    display_name: Bad\n"
+        f"    capability:\n"
+        f"      kind: GRIPPER_PARALLEL\n"
+        f"      normalized_range: [0.0, 1.0]\n"
+        f"    # missing: gripper: block\n"
+    )
+    with pytest.raises(ValueError, match="gripper"):
+        load_manifest(scene_yaml)
