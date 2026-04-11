@@ -78,13 +78,18 @@ def build_world_descriptor(
     publish_hz: int = 100,
     physics_hz: int = 500,
 ) -> "world_pb.WorldDescriptor":
-    """Assemble a `WorldDescriptor` proto from manifest metadata.
+    """Assemble a `WorldDescriptor` proto from a WorldManifest.
 
-    `world` is accepted for future use (capability-derived limits,
-    validation that each manifest actuator actually exists in the
-    MJCF — currently done by `MuJoCoWorld._build_lookups`).
+    MVP-2 notes:
+    - `manifest.robots[i].sensors` is always empty (sensor enumeration
+      from MJCF is deferred; see spec §2.3).
+    - `manifest.urdf_path` may be None in MVP-2; this function does not
+      read urdf_path, so the None case is transparent.
+
+    `world` is accepted for future capability-derived limit validation
+    but is currently unused.
     """
-    del world  # unused for MVP-1; see docstring
+    del world  # unused; see docstring
 
     robots = []
     for r in manifest.robots:

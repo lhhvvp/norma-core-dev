@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""No-network diagnostic: load a world manifest, verify its MJCF's
-source_hash against the inputs, and print a readable summary of the
-WorldDescriptor that sim-runtime would see at handshake.
+"""Probe a norma_sim world manifest.
+
+Loads a world manifest (MVP-2 .scene.yaml schema), builds a
+WorldDescriptor, and prints a readable summary.
 
 Usage:
   PYTHONPATH=software/sim-server python3 \\
     software/sim-server/scripts/probe_manifest.py \\
-    --manifest hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml
+    --manifest hardware/elrobot/simulation/worlds/elrobot_follower.scene.yaml
 """
 from __future__ import annotations
 
@@ -15,17 +16,12 @@ import sys
 from pathlib import Path
 
 from norma_sim.world.descriptor import build_world_descriptor
-from norma_sim.world.manifest import load_manifest, verify_source_hash
+from norma_sim.world.manifest import load_manifest
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Probe a norma_sim world manifest")
     ap.add_argument("--manifest", type=Path, required=True)
-    ap.add_argument(
-        "--no-verify-hash",
-        action="store_true",
-        help="Skip the sha256 check (e.g. when testing a gen.py in progress)",
-    )
     args = ap.parse_args(argv)
 
     if not args.manifest.exists():
@@ -38,27 +34,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: manifest load failed: {e}", file=sys.stderr)
         return 1
 
-    if not args.no_verify_hash:
-        try:
-            verify_source_hash(args.manifest, manifest.mjcf_path)
-            hash_line = f"source_hash OK ({manifest.mjcf_path.name})"
-        except Exception as e:
-            print(f"ERROR: source_hash: {e}", file=sys.stderr)
-            return 2
-    else:
-        hash_line = "source_hash verification: SKIPPED"
-
     desc = build_world_descriptor(manifest)
 
     print(f"world_name:      {manifest.world_name}")
-    print(f"urdf_path:       {manifest.urdf_path}")
+    print(f"urdf_path:       {manifest.urdf_path if manifest.urdf_path else '(not used in MVP-2)'}")
     print(f"mjcf_path:       {manifest.mjcf_path}")
     print(f"scene.timestep:  {manifest.scene.timestep}s")
     print(f"scene.gravity:   {manifest.scene.gravity}")
     print(f"scene.integrator:{manifest.scene.integrator}")
     print(f"scene.solver:    {manifest.scene.solver}")
     print(f"scene.iterations:{manifest.scene.iterations}")
-    print(hash_line)
     print()
 
     print(f"robots ({len(desc.robots or [])}):")
