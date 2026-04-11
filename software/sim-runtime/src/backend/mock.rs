@@ -1,5 +1,7 @@
 //! `MockBackend` — an in-process fake `WorldBackend` used by
-//! `sim-runtime`'s unit tests in Chunks 3 and 4.
+//! `sim-runtime`'s unit tests in Chunks 3 and 4 and, when the
+//! `test-util` feature is enabled, by downstream crates' tests
+//! (Chunk 8 Station E2E integration).
 //!
 //! The mock does not spawn any subprocess and performs no I/O. It
 //! owns a WorldDescriptor and a queue of pre-baked inbound Envelopes;
@@ -8,7 +10,7 @@
 //! Envelopes to an observer channel so tests can assert what the
 //! runtime sent.
 
-#![cfg(test)]
+#![cfg(any(test, feature = "test-util"))]
 
 use super::{BackendStarted, BackendTermination, WorldBackend};
 use crate::errors::SimRuntimeError;
@@ -17,7 +19,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-pub(crate) struct MockBackend {
+pub struct MockBackend {
     pub scripted_inbound: Vec<Envelope>,
     pub descriptor: WorldDescriptor,
     pub outbound_observer: Option<mpsc::Sender<Envelope>>,

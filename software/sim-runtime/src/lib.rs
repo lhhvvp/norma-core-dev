@@ -30,3 +30,12 @@ pub use runtime::SimulationRuntime;
 // Config types live in station-iface to avoid circular crate deps;
 // re-export them here for convenience.
 pub use station_iface::config::{LogCapture, SimMode, SimRuntimeConfig};
+
+/// Test-only helpers exposed to downstream integration tests when
+/// the `test-util` feature is enabled. In-tree unit tests access
+/// these types directly without going through `pub`; downstream
+/// callers use this module.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util {
+    pub use crate::backend::mock::MockBackend;
+}

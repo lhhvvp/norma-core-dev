@@ -70,13 +70,32 @@ impl SimulationRuntime {
     /// Test-only constructor that accepts any `WorldBackend`
     /// (typically `MockBackend`). Skips the `SimRuntimeConfig` dispatch
     /// so integration tests don't need to assemble a full config.
-    #[cfg(test)]
+    ///
+    /// Internal because `WorldBackend` is `pub(crate)`; downstream
+    /// tests reach this via the concrete `start_with_mock` helper
+    /// below, which takes a `MockBackend` directly so the
+    /// architecture invariant that keeps the trait crate-private
+    /// stays intact.
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) async fn start_with_backend(
         normfs: Arc<NormFS>,
         backend: Box<dyn WorldBackend>,
         session_id: String,
     ) -> Result<Arc<Self>, SimRuntimeError> {
         Self::bootstrap(normfs, backend, session_id, 1_000).await
+    }
+
+    /// Test-utility constructor for downstream crates. Takes a
+    /// concrete `MockBackend` (exposed via the `test-util` feature)
+    /// so the private `WorldBackend` trait stays out of the public
+    /// surface.
+    #[cfg(any(test, feature = "test-util"))]
+    pub async fn start_with_mock(
+        normfs: Arc<NormFS>,
+        mock: crate::backend::mock::MockBackend,
+        session_id: String,
+    ) -> Result<Arc<Self>, SimRuntimeError> {
+        Self::start_with_backend(normfs, Box::new(mock), session_id).await
     }
 
     async fn bootstrap(

@@ -4,6 +4,13 @@ version.workspace = true
 edition = "2021"
 description = "SimulationRuntime subsystem: capability-keyed world state for Station."
 
+[features]
+# When enabled, exposes the in-process MockBackend + the test-only
+# SimulationRuntime::start_with_backend constructor so downstream
+# crates (notably the Station binary's integration tests) can drive
+# a full bridge + runtime loop without a real sim subprocess.
+test-util = []
+
 [dependencies]
 tokio = { workspace = true }
 normfs = { workspace = true }
