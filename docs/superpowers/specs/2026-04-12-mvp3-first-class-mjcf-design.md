@@ -35,8 +35,8 @@ Chunk 0" to avoid mid-plan drift. This spec executes that deferral.
 - Every subsequent MVP-3 chunk (whether policy training, multi-robot support,
   or the `usbvideo-compat-bridge` deferred acceptance test) will reference
   this directory. Doing the restructure first keeps later chunks clean.
-- Currently the comparison table (`parameters/calibration_notes.md`'s
-  eventual content) lives at
+- Currently the comparison table (this chunk's
+  `mujoco/elrobot_follower/measurements/menagerie_diff.md`) lives at
   `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md` —
   which is awkwardly positioned as a "spec artifact" when it is actually
   a physics-model calibration record. Moving it closer to the MJCF is a
@@ -199,16 +199,6 @@ organizational only — no physics, no Rust, no new runtime behavior.
 - No new Python test logic beyond `test_urdf_parity.py` and
   `test_mjx_compat.py`. Both are minimal skeletons (≤30 lines each) that
   reserve future work slots, not full implementations.
-- No changes to Rust crates.
-- No changes to `norma_sim` source code (only docstring updates).
-- No changes to `docs/superpowers/plans/` or other spec files (only one
-  `git mv` from the specs directory).
-
-### 2.3 Non-goals for this chunk
-
-- No physics parameter tuning. The MJCF content is untouched (except for
-  the single `meshdir` attribute).
-- No new tests. Only test relocation.
 - No changes to Rust crates.
 - No changes to `norma_sim` source code (only docstring updates).
 - No changes to `docs/superpowers/plans/` or other spec files (only one
@@ -883,305 +873,6 @@ tests do not need it and will collect cleanly without PYTHONPATH if invoked
 directly from the command line — but invoking via `make sim-test` the
 unified PYTHONPATH is harmless.
 
-### 4.2 Content changes in moved files
-
-Only one of the moved files needs a content edit:
-
-**`hardware/elrobot/simulation/models/elrobot_follower.xml`:**
-
-```diff
--  <compiler angle="radian" meshdir="assets" autolimits="true"/>
-+  <compiler angle="radian" meshdir="../assets" autolimits="true"/>
-```
-
-The file moves from `simulation/` (depth 3 from repo root) to
-`simulation/models/` (depth 4). MuJoCo's `meshdir` attribute is relative to
-the MJCF file's parent directory. The assets stay at `simulation/assets/`,
-so from `simulation/models/elrobot_follower.xml`, the path to assets is
-one directory up plus `assets/`.
-
-No other moved file needs content edits:
-
-- `elrobot_follower.scene.yaml` has `mjcf_path: ./elrobot_follower.xml` which
-  is relative to the scene yaml's own directory. Both files move together
-  into `models/`, so the relative path remains valid.
-- `calibration_notes.md` is pure documentation. No cross-file references to
-  its previous location (we verified via grep; plan/spec files in `docs/` are
-  explicitly out of scope).
-- `test_physics_acceptance.py` uses the `elrobot_scene_yaml` fixture, which
-  is provided by the new `conftest.py` with the updated path. No test source
-  change needed.
-- `test_mimic_gripper.py` uses the `elrobot_mjcf_path` fixture — same story.
-
-### 4.3 New files
-
-Four new files are created at the paths shown below.
-
-#### 4.3.1 `hardware/elrobot/simulation/VERSION`
-
-```
-0.1.0
-```
-
-Single-line file (with trailing newline). Semver tracking the physics model
-only, independent of the `software/` crates' VERSION. Rationale for starting
-at `0.1.0`:
-
-- Signals "calibration is iterative; nothing has been measured against real
-  hardware yet".
-- Leaves room for patch/minor/major bumps before hitting `1.0.0`, which will
-  be reserved for the first release with real-hardware sysID data.
-- Matches the starting version proposed in the "一等公民 MJCF" memory SOP.
-
-#### 4.3.2 `hardware/elrobot/simulation/README.md`
-
-Full content:
-
-```markdown
-# ElRobot Physics Model
-
-This directory contains the MuJoCo physics model (MJCF) for the ElRobot
-follower arm — 8 actuators (7 revolute + 1 gripper with tendon-mimic
-parallel jaws), forked from MuJoCo Menagerie's `trs_so_arm100` physics
-baseline and hand-tuned to ElRobot's 8-joint URDF kinematics.
-
-## What's here
-
-- `VERSION` — semver for the physics model, independent of `software/` VERSION
-- `CHANGELOG.md` — chronological log of physics-relevant changes
-- `models/elrobot_follower.xml` — main MJCF (8 joints + 2 gripper mimic slides)
-- `models/elrobot_follower.scene.yaml` — runtime scene config consumed by `norma_sim`
-- `parameters/calibration_notes.md` — per-joint physics rationale (armature,
-  frictionloss, kp, dampratio, forcerange) with cross-references to Menagerie
-- `tests/` — MJCF-specific validation (physics invariants + step response + P0 mimic)
-- `vendor/menagerie/` — reference: upstream Menagerie MJCF + VENDOR.md + LICENSE
-- `assets/*.stl` — visual meshes (referenced by MJCF via `meshdir="../assets"`)
-- `elrobot_follower.urdf` — original URDF kinematics source (stays here for reference)
-
-## How to modify
-
-To change a physics parameter (armature, kp, dampratio, forcerange, etc.):
-
-1. Edit `models/elrobot_follower.xml` directly
-2. Update `parameters/calibration_notes.md` with the reason for the change
-3. Bump `VERSION` (patch for tuning, minor for structural, major for breaking)
-4. Add an entry to `CHANGELOG.md` under `[Unreleased]`
-5. Run the tests:
-   ```bash
-   PYTHONPATH=software/sim-server python3 -m pytest \
-       hardware/elrobot/simulation/tests/ -v
-   ```
-6. If Floor §3.1 acceptance tests fail, iterate (5-iteration tuning budget
-   per motor per MVP-2 spec §7.5)
-
-To add a new joint or body: same flow, plus update the URDF if the
-kinematics change.
-
-To re-vendor Menagerie: see `vendor/menagerie/VENDOR.md`.
-
-## Relationship to software
-
-- `software/sim-server/norma_sim/world/manifest.py` loads this MJCF via the scene yaml
-- `software/station/bin/station/station-sim.yaml` points at `models/elrobot_follower.scene.yaml`
-- `software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml` maps
-  ElRobot actuator names to fake ST3215 motor_ids for the web UI's slider viewer
-- The Python test suite at `software/sim-server/tests/world/` still consumes
-  `elrobot_scene_yaml` / `elrobot_mjcf_path` fixtures (defined in both
-  `software/sim-server/tests/conftest.py` and
-  `hardware/elrobot/simulation/tests/conftest.py` — the duplication is
-  intentional so this directory can be exercised independently)
-
-## Upstream contribution
-
-This model may eventually be contributed to `mujoco_menagerie` as an
-`elrobot_follower` sibling of `trs_so_arm100`. Prerequisites (all TODO
-for post-MVP-3):
-
-- sysID measurements on a real ElRobot (armature + frictionloss from experiment,
-  not copied from Menagerie)
-- Menagerie's contribution review process (tests, LICENSE, style conventions)
-- A `README.md` in `mujoco_menagerie/elrobot_follower/` following their format
-
-See `docs/upstream-to-menagerie.md` (not yet written) for the procedure once
-it's defined.
-```
-
-#### 4.3.3 `hardware/elrobot/simulation/CHANGELOG.md`
-
-Full content:
-
-```markdown
-# ElRobot Physics Model CHANGELOG
-
-Follows a subset of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versioning is semver, independent of the `software/` crates.
-
-## [Unreleased]
-
-(nothing yet)
-
-## [0.1.0] — 2026-04-12
-
-### Added
-
-- Initial hand-written MJCF `models/elrobot_follower.xml` (260 lines) derived
-  from Menagerie `trs_so_arm100` v1.3 @ commit `c771fb04055d805f20db0eab6cb20b67555887d0`
-  (2025-06-09 tuning).
-- 8 `<position>` actuators (`act_motor_01` .. `act_motor_08`), mapped via
-  `actuator_annotations` in the scene yaml to client-facing `actuator_id`
-  `rev_motor_01` .. `rev_motor_08`.
-- Menagerie-baseline physics defaults in `<default class="elrobot">`:
-  `joint armature=0.1 frictionloss=0.1`, `position kp=50 dampratio=1 forcerange=±2.94`.
-  forcerange uses URDF effort (±2.94) instead of Menagerie's ±3.5 (documented
-  in `parameters/calibration_notes.md`).
-- Tendon-based gripper mimic preserved from MVP-1 — 2 mimic slide joints
-  (`rev_motor_08_1`, `rev_motor_08_2`) coupled via `<tendon><fixed>` +
-  `<equality><tendon>` with multipliers ±0.0115. **P0 invariant** —
-  covered by `tests/test_mimic_gripper.py`.
-- Self-collision avoidance via 10 `<contact><exclude>` pairs (added after
-  MVP-2 Chunk 5 Task 5.2 code review discovered motion-dependent collisions
-  that the rest-pose `ncon=0` check didn't catch). Affected pairs cover
-  `base_link`↔`Joint_01_1` (M1 stall root cause) + 9 kinematic fold-back
-  pairs surfaced by a per-motor full-range sweep.
-- Primitive collision geoms (box/cylinder/sphere) replacing MVP-1's
-  mesh-based collision (which caused self-intersection at rest).
-- `parameters/calibration_notes.md` — Menagerie→ElRobot joint-by-joint
-  comparison table, armature/damping/frictionloss inheritance strategy,
-  and 4 policy amendments (forcerange=URDF, dampratio not kv, explicit
-  ctrlrange not inheritrange, Gripper_Gear_v1_1 diaginertia floor).
-  **Finding**: 2 independent ElRobot joints have no Menagerie analog
-  (`rev_motor_02`, `rev_motor_05`), not the 3 the plan originally guessed.
-- `tests/test_physics_acceptance.py` — 13 tests encoding spec §3.1 Floor
-  criteria: Floor 1 (ncon=0 at rest), Floor 2 (M[i,i]+armature≥1e-4 per DOF),
-  Floor 3 (10000 random-ctrl steps no NaN), Floor 4 (per-motor step response
-  parametrized × 8 motors), Floor 5+6 delegation stubs.
-- `tests/test_mimic_gripper.py` — P0 regression, 2 tests.
-
-### Physics gate results (at initial release)
-
-- Floor §3.1 all 6 criteria: GREEN (0 tuning iterations — Menagerie baseline
-  passed first-try under MuJoCo's Coulomb frictionloss + gravity bleed,
-  contradicting an analytical PD overshoot prediction)
-- Ceiling §3.2 item 7 (web UI slider responsiveness including M1): PASS
-  (manual browser smoke test 2026-04-12). MVP-1's M1-unresponsive regression
-  is resolved.
-- Ceiling §3.2 item 8 (MuJoCo viewer side-by-side with Menagerie): DEFERRED
-  (headless execution environment; advisory per spec §7.5)
-
-### Known limitations
-
-- Parameters are inherited from Menagerie's 2025-06-09 tuning (no real-hardware
-  sysID yet). For the 2 ElRobot-unique joints, nearest-neighbor estimation is
-  used — physics is plausible but not measured.
-- Gripper_Jaw_01/02 inertial origins were reset to body origin (URDF export
-  bug: the URDF had jaw COMs expressed in world-frame coordinates). The
-  resulting parallel-axis error (~1.5e-6 kg·m²) is negligible for mimic-
-  constrained jaws but worth flagging.
-- Merged inertia for fixed joints (ST3215 motor mass collapsed into the
-  parent revolute body) omits parallel-axis shift (~5.5e-6 kg·m²). Acceptable
-  for Floor gates; re-evaluate for real-hardware tracking.
-
-### Integration context
-
-- MVP-2 merge commit: `93c1597` on `main` (2026-04-12)
-- Implemented over Chunks 5-7 of the MVP-2 plan
-  (`docs/superpowers/plans/2026-04-11-mvp2-menagerie-walking-skeleton.md`)
-```
-
-#### 4.3.4 `hardware/elrobot/simulation/tests/conftest.py`
-
-Full content:
-
-```python
-"""Shared pytest fixtures for the ElRobot first-class physics model tests.
-
-These mirror the ElRobot fixtures in software/sim-server/tests/conftest.py so
-this directory can be pytest-invoked independently (e.g. for upstream
-contribution or MJCF-only iteration). The duplication is intentional per
-MVP-3 Chunk 0 design (2026-04-12).
-"""
-from pathlib import Path
-
-import pytest
-
-
-@pytest.fixture
-def repo_root() -> Path:
-    # tests/conftest.py → simulation/ → elrobot/ → hardware/ → repo root
-    return Path(__file__).resolve().parents[4]
-
-
-@pytest.fixture
-def elrobot_mjcf_path(repo_root: Path) -> Path:
-    """Path to the hand-written ElRobot MJCF."""
-    p = repo_root / "hardware/elrobot/simulation/models/elrobot_follower.xml"
-    if not p.exists():
-        pytest.skip(f"ElRobot MJCF not found at {p}")
-    return p
-
-
-@pytest.fixture
-def elrobot_scene_yaml(repo_root: Path) -> Path:
-    """Path to the hand-written ElRobot scene.yaml."""
-    p = repo_root / "hardware/elrobot/simulation/models/elrobot_follower.scene.yaml"
-    if not p.exists():
-        pytest.skip(f"ElRobot scene.yaml not found at {p}")
-    return p
-```
-
-### 4.4 Path updates in unchanged files
-
-Seven existing files retain their location but need content edits to point
-at the new `models/` paths. The changes are mechanical substitutions of
-`hardware/elrobot/simulation/elrobot_follower*` →
-`hardware/elrobot/simulation/models/elrobot_follower*`.
-
-| # | File | Location of reference |
-|---|---|---|
-| 1 | `software/station/bin/station/station-sim.yaml` | `sim-runtime.launcher` list, `--manifest` arg |
-| 2 | `software/station/bin/station/station-shadow.yaml` | same field as station-sim.yaml |
-| 3 | `Makefile` | `sim-standalone` target, `--manifest` arg |
-| 4 | `software/sim-server/README.md` | Scenario B standalone command example |
-| 5 | `software/sim-server/norma_sim/world/manifest.py` | module docstring (line 3) |
-| 6 | `software/sim-server/scripts/probe_manifest.py` | usage example in module docstring |
-| 7 | `software/sim-server/tests/conftest.py` | `elrobot_mjcf_path` and `elrobot_scene_yaml` fixtures (two path assignments) |
-
-**Load-bearing note on item 7**: **Four** test files in
-`software/sim-server/tests/world/` still use the `elrobot_scene_yaml` /
-`elrobot_mjcf_path` fixtures from the old `conftest.py`:
-
-1. `test_model.py`
-2. `test_snapshot.py`
-3. `test_descriptor_build.py`
-4. `test_actuation.py`
-
-(Note: `test_mimic_gripper.py` — the fifth `world/` file that currently
-uses `elrobot_mjcf_path` — is moving out in this chunk, which is why it
-is not counted here.)
-
-These four test files are NOT moving in this chunk, so the old
-`conftest.py` must keep its fixture definitions with updated paths. The
-same fixture is therefore defined in two places (old and new
-`conftest.py`), each pointing at the new `models/` location. This
-duplication was approved during the brainstorming Q4 decision.
-
-### 4.5 Makefile `sim-test` target update
-
-Diff:
-
-```diff
- .PHONY: sim-test
- sim-test:
- 	# ... (arch invariants + cargo test targets unchanged)
--	PYTHONPATH=software/sim-server python3 -m pytest software/sim-server/tests/
-+	PYTHONPATH=software/sim-server python3 -m pytest \
-+	    software/sim-server/tests/ \
-+	    hardware/elrobot/simulation/tests/
-```
-
-One logical change: append the new test directory to the existing `pytest`
-invocation. `PYTHONPATH=software/sim-server` remains required (the new tests
-import `norma_sim.world.*` the same way the old tests do).
 
 ---
 
@@ -1358,26 +1049,6 @@ This step is optional in headless environments. Its purpose is a full-stack
 sanity check that the path-update changes in `station-sim.yaml` resolve
 correctly given the deeper `manifests/norma/` scene yaml location.
 
-### 5.7 Station smoke test (optional)
-
-```bash
-PYTHONPATH=software/sim-server ./target/debug/station \
-    -c software/station/bin/station/station-sim.yaml --web 0.0.0.0:8889
-```
-
-Expected startup log lines (same as MVP-2 Task 7.1):
-
-```
-Starting sim-runtime (mode=Internal, startup_timeout_ms=5000)
-sim-runtime started: elrobot_follower
-st3215_compat_bridge bridge started: robot_id=elrobot_follower ... motors=8
-WebSocket server listening on 0.0.0.0:8889
-```
-
-This step is optional in headless environments. Its purpose is a full-stack
-sanity check that the path-update changes in `station-sim.yaml` resolve
-correctly.
-
 ---
 
 ## 6. Risk Analysis
@@ -1389,8 +1060,10 @@ correctly.
 - **New markdown files** (`README.md`, `CHANGELOG.md`): additive, no side
   effects.
 - **`VERSION` file**: a one-line text file. Trivial.
-- **New `conftest.py`**: a fresh file with copied-and-adapted fixtures. The
-  `parents[4]` path resolution is the only runtime computation; testable.
+- **New `conftest.py`**: a fresh file with a single fixture
+  (`elrobot_mjcf_path`) that resolves to the robot package's own MJCF via
+  `Path(__file__).resolve().parent.parent / "elrobot_follower.xml"`. No
+  `norma_sim` import, no cross-directory path arithmetic that could drift.
 
 ### 6.2 Moderate-risk operations
 
@@ -1421,7 +1094,7 @@ correctly.
 
 ### 6.3 Low-but-notable risks
 
-- **Path references in non-test files**: if any of the 7 files in Section 4.4
+- **Path references in non-test files**: if any of the 10 rows in Section 4.4
   is missed, a runtime consumer may reference a nonexistent path. The
   Section 5.6 grep catches this.
 - **Accidental edit during `git mv`**: `git mv` followed by content editing
