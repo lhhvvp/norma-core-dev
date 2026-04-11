@@ -170,3 +170,66 @@ def _parse_sensor(raw: dict[str, Any]) -> SensorManifest:
         capability_kind=raw["capability"]["kind"],
         source=raw.get("source"),
     )
+
+
+def _enumerate_mjcf_actuators(mjcf_path: Path) -> list[tuple[str, str, str]]:
+    """Parse an MJCF file via MuJoCo's compiler (which resolves <include>)
+    and return the actuator list as `(actuator_name, joint_name, type_tag)`
+    tuples.
+
+    `type_tag` values:
+      - "position" — `<position>` actuator: synthesized as REVOLUTE_POSITION
+        when no annotation is provided
+      - "motor"    — `<motor>` actuator: requires explicit annotation
+      - "general"  — `<general>` actuator: requires explicit annotation
+      - "velocity" — `<velocity>` actuator: requires explicit annotation
+
+    The type distinction is derived from the gain/bias type enum pair:
+      position: gain=FIXED, bias=AFFINE
+      motor:    gain=FIXED, bias=NONE
+      general:  anything else
+    """
+    import mujoco  # imported lazily so this module stays lightweight
+
+    if not mjcf_path.exists():
+        raise FileNotFoundError(f"MJCF not found: {mjcf_path}")
+
+    try:
+        model = mujoco.MjModel.from_xml_path(str(mjcf_path))
+    except Exception as e:
+        raise ValueError(f"failed to compile MJCF {mjcf_path}: {e}") from e
+
+    # Resolve enum values via the typed enums (robust to MuJoCo version bumps)
+    gain_fixed = int(mujoco.mjtGain.mjGAIN_FIXED)
+    bias_affine = int(mujoco.mjtBias.mjBIAS_AFFINE)
+    bias_none = int(mujoco.mjtBias.mjBIAS_NONE)
+    joint_trn_type = int(mujoco.mjtTrn.mjTRN_JOINT)
+
+    results: list[tuple[str, str, str]] = []
+    for i in range(model.nu):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
+        if not name:
+            continue  # skip unnamed actuators (rare)
+
+        # Classify actuator type from gain/bias pair
+        gain_type = int(model.actuator_gaintype[i])
+        bias_type = int(model.actuator_biastype[i])
+        if gain_type == gain_fixed and bias_type == bias_affine:
+            type_tag = "position"
+        elif gain_type == gain_fixed and bias_type == bias_none:
+            type_tag = "motor"
+        else:
+            type_tag = "general"
+
+        # Resolve the joint name this actuator controls.
+        # actuator_trntype[i] can be JOINT (1) or other (tendon, site).
+        # actuator_trnid[i, 0] is the joint id when trntype == JOINT.
+        if int(model.actuator_trntype[i]) != joint_trn_type:
+            continue  # non-joint actuators (tendons, sites) are not supported in MVP-2
+        joint_id = int(model.actuator_trnid[i, 0])
+        joint_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+        if not joint_name:
+            continue  # actuator controlling unnamed joint — rare edge case, skip
+
+        results.append((name, joint_name, type_tag))
+    return results
