@@ -1,0 +1,21 @@
+# MVP-2 Phase 1 — walking skeleton scene config for Menagerie trs_so_arm100.
+#
+# This yaml runs Menagerie's SO-ARM100 MJCF (vendored in Chunk 1, unmodified)
+# through MVP-1's full station stack. Its purpose is to verify that our
+# Rust/IPC/bridge infrastructure is robot-agnostic — it accepts any
+# MuJoCo-valid MJCF with any actuator topology.
+#
+# This file is a PERMANENT REGRESSION FIXTURE: it stays in the repo after
+# Phase 2 lands the ElRobot MJCF, as the baseline for assumption A ("infra
+# is robot-agnostic"). If something in sim-runtime / norma_sim regresses
+# and only ElRobot breaks, this scene yaml + test_menagerie_walking_skeleton.py
+# prove the infra is still sound and the problem is ElRobot-specific.
+
+world_name: menagerie_trs_so_arm100
+mjcf_path: ./vendor/menagerie/trs_so_arm100/scene.xml
+# No scene_overrides — Menagerie's <option> block is authoritative.
+# No scene_extras — Menagerie's scene.xml already has lights + floor.
+# No actuator_annotations — auto-synthesize all <position> actuators as
+# REVOLUTE_POSITION. If Phase 1 smoke test reveals that Menagerie's
+# gripper needs GRIPPER_PARALLEL semantics for usable UX, add an
+# annotation here; otherwise leave minimal.
