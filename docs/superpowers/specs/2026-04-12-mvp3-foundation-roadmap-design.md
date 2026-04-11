@@ -340,11 +340,12 @@ complete, fresh-checkout-runnable robot package.
 - Chunk 1 (`A2 — Assets+URDF Move`) landed (**hard prerequisite** — success
   criterion #5 below requires assets+URDF inside the package for the cp -r /tmp
   self-containment test to pass; without Chunk 1, that test fails)
-- Chunk 2 (`A3 — Scene Wrapper`) landed (**soft prerequisite** — Chunk 3
-  *content* doesn't depend on scene.xml, but the cp -r self-containment count
-  in success criterion #5 includes Chunk 2's scene loadable smoke test;
-  reverse-ordering produces an intermediate state where the package looks
-  incomplete)
+- Chunk 2 (`A3 — Scene Wrapper`) landed (**soft + hard combination** per
+  Section 6: *content*-soft because Chunk 3's rewrite doesn't reference
+  scene.xml; *count*-hard because success criterion #5's exact value
+  18+1s assumes Chunk 2's `test_scene_loadable.py` is present — running
+  Chunk 3 before Chunk 2 would make criterion #5 read 17+1s actual vs
+  18+1s expected, a hard failure)
 - `make sim-test` baseline 91 passed, 1 skipped
 - Package is self-contained (assets + URDF + scene.xml all in place)
 
@@ -746,16 +747,22 @@ the predecessor Chunk 0 spec (Section 5.5: post-Chunk-0 sim-server-alone =
 86 passed; full `make sim-test` = 90 passed). Use this table to spot any
 arithmetic drift in success criteria across the 3 chunk plans.
 
-| Stage | `make sim-test` | sim-server alone | engine-tier alone | cp -r /tmp self-containment |
+| Stage | `make sim-test` | sim-server alone | engine-tier alone (in repo) | cp -r /tmp self-containment |
 |---|---|---|---|---|
-| Post-Chunk-0 (HEAD `6ef605b`) | 90+1s | 86 | 4+1s | 4+1s |
-| Post-Chunk-1 (A2: assets+urdf) | 90+1s | 86 | 4+1s | 4+1s (+url path delta) |
+| Post-Chunk-0 (HEAD `6ef605b`) | 90+1s | 86 | 4+1s | **N/A** — package not self-contained yet (assets + urdf still outside; cp -r currently produces 0 passed / 2 failed / 3 skipped because `meshdir="../../assets"` cannot resolve in `/tmp`) |
+| Post-Chunk-1 (A2: assets+urdf) | 90+1s | 86 | 4+1s | 4+1s — **first row where self-containment actually passes** (Chunk 1 moves both assets and urdf into the package, making cp -r meaningful for the first time) |
 | Post-Chunk-2 (A3: scene.xml) | 91+1s | 86 | 5+1s | 5+1s |
 | Post-Chunk-3 (A1: test decoupling) | 91+1s | 73 | 18+1s | **18+1s** |
 
 Notes:
 - "+1s" means +1 skipped (`test_mjx_compat.py` placeholder; mjx not
   installed in dev env)
+- "engine-tier alone (in repo)" = `pytest hardware/elrobot/simulation/mujoco/elrobot_follower/tests/`
+  run from the repo root (without PYTHONPATH); resolves `meshdir`/URDF
+  fixture paths via the repo's directory layout
+- "cp -r /tmp self-containment" = same suite executed after copying the
+  whole `mujoco/elrobot_follower/` directory to `/tmp/`; only meaningful
+  once the package owns its own assets + URDF (Chunk 1 onwards)
 - The Chunk 3 transition: sim-server -13 (acceptance test deleted from
   `software/sim-server/tests/integration/`), engine-tier +13 (rewritten
   acceptance test moved to package). Net `make sim-test` = 0
@@ -763,17 +770,33 @@ Notes:
   scene_loadable) + 13 (Chunk 3 acceptance) = 18
 - 73 passed = 86 sim-server-alone post-Chunk-0 baseline − 13 acceptance
   tests removed by Chunk 3 = 73
+- The Post-Chunk-0 cp -r failing state is exactly what motivates MVP-3
+  Foundation: Section 1 success criterion #3 ("fully self-contained")
+  goes from N/A → passing across the 3 chunks
 
 ## Appendix B: Spec amendment hook
 
 If a chunk's brainstorming surfaces a roadmap-level concern that
-invalidates a Section 3/4/5 boundary statement, a Section 6 dependency
-claim, or any of the U1-U7 defaults — **append a `## Spec amendments`
-section to this file before starting the affected chunk's plan**, similar
-to the amendment chain in `2026-04-12-mvp3-first-class-mjcf-design.md`
-(the Chunk 0 spec). Do not silently overwrite existing content. Each
-amendment entry should include date, what was found, what changed, and
-why. The intent is to make Section 8's "do not change MVP-3 scope
+invalidates a Section 3/4/5 success criterion, prerequisite, or boundary
+statement, or a Section 6 dependency claim — **append a `## Spec
+amendments` section to this file before starting the affected chunk's
+plan**, similar to the amendment chain in
+`2026-04-12-mvp3-first-class-mjcf-design.md` (the Chunk 0 spec). Do not
+silently overwrite existing content. Each amendment entry should include
+date, what was found, what changed, and why.
+
+**When to amend vs when to handle in normal review**:
+
+- **Amend** when a finding invalidates a *success criterion*, a
+  *prerequisite*, a *boundary statement*, or a *dependency edge*
+- **Resolve via normal per-chunk brainstorming** when a finding only
+  refines an unresolved Open Decision (U1-U7) default — those are
+  expected to be decided during chunk-level work, not amendments
+- **Just note in the chunk plan** when a finding is purely
+  chunk-internal (e.g., "Chunk 1 plan needs an extra micro-step to fix
+  STL filename casing") — the chunk plan owns its own details
+
+The intent is to make Section 8's "do not change MVP-3 scope
 mid-execution" enforceable: amendments are visible, traceable, and
 required to be discussed during the per-chunk brainstorming, not patched
 into a chunk plan.
