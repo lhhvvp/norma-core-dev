@@ -59,7 +59,10 @@ milestone.
 3. The package is **fully self-contained**:
    `cp -r mujoco/elrobot_follower /tmp/test && cd /tmp/test && pytest tests/`
    passes (every dependency lives inside the package directory)
-4. `make sim-test` is fully green with no regressions (≥90 passed)
+4. `make sim-test` is fully green with no regressions (assertion: `passed ≥
+   chunk_0_baseline_passed + 2`; the +2 comes from Chunk 2's
+   `test_scene_loadable.py` and Chunk 3's net delta of +1, see Section 2
+   inventory and Appendix A; do NOT hardcode any absolute count)
 5. `mujoco/elrobot_follower/robot.yaml`'s `upstream.prerequisites` list moves
    from 1/5 done (Chunk 0) to **3/5 done** (Chunk 0 + MVP-3 Engine Package Completion):
    - ✅ `LICENSE file present (done at 0.1.0)` — done at Chunk 0
@@ -115,7 +118,7 @@ directions remain open.
 | **Test count delta (`make sim-test` total)** | +0 | +1 | -12 + 13 = +1 |
 | **Post-chunk `make sim-test`** | baseline + 0 | baseline + 1 | baseline + 2 |
 | **Estimated plan length** | 1000-1400 lines | 300-500 lines | 700-1000 lines |
-| **Prerequisite** | Chunk 0 (`6ef605b`) | Chunk 1 landed | Chunk 1 landed (hard); Chunk 2 landed (soft + count-hard, see Section 6) |
+| **Prerequisite** | Chunk 0 (`6ef605b`) | Chunk 1 landed | Chunk 1 landed (hard); Chunk 2 landed (soft — see Section 6; the prior "soft + count-hard" framing was an artifact of writing absolute test counts and disappears under baseline-relative deltas) |
 
 **Why baseline-relative deltas (codex iter-1 finding)**: absolute counts like
 "90 passed" depend on (a) current dev env (no `mujoco.mjx` installed → 1 test
@@ -407,8 +410,10 @@ Approximate skeleton (final form determined in Chunk 2 brainstorming):
 ### VERSION bump policy
 
 `0.2.0` → `0.2.1` (patch). Reason: purely additive; no API or physics change.
-Consumers don't need to do anything. Optional new entry point. See Open
-Decision U1 for an alternative (`0.3.0` minor as foundation milestone marker).
+Consumers don't need to do anything. Optional new entry point. (Open
+Decision U1 considered `0.3.0` minor as a milestone marker but resolved
+to patch per codex iter-1 — semver should signal consumer-visible changes,
+not milestone progress.)
 
 ---
 
@@ -705,7 +710,7 @@ Chunk 0 (✅ 6ef605b)
    │       │
    │       ├─→ Chunk 2 (A3: scene.xml)    [soft: technically reversible]
    │       │       │
-   │       │       └─→ Chunk 3 (A1: test) [soft + hard combination]
+   │       │       └─→ Chunk 3 (A1: test) [soft]
    │       │
    │       └────────→ Chunk 3 (A1: test)  [hard: self-containment requires assets in package]
    │
