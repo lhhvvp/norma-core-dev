@@ -172,7 +172,7 @@ hardware/elrobot/simulation/
 │           ├── scene.xml              # Menagerie 原文件，未修改
 │           ├── trs_so_arm100.xml
 │           └── assets/                # Menagerie 自己的 meshes
-└── worlds/                             # 删除（或留空 README）
+                                        # worlds/ 整个目录删除（见 §5.2）
 ```
 
 ### 5.2 删除的文件
@@ -529,8 +529,8 @@ Phase 2 acceptance (manual, MVP-2):
 
 Side-by-side with MuJoCo native viewer:
 
-- [ ] Terminal 1: python -m mujoco.viewer --mjcf <elrobot_follower.xml>
-- [ ] Terminal 2: python -m mujoco.viewer --mjcf <menagerie SO-ARM100 scene>
+- [ ] Terminal 1: python -m mujoco.viewer hardware/elrobot/simulation/elrobot_follower.xml
+- [ ] Terminal 2: python -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml
 - [ ] 手动拖动两边的 joint
 - [ ] 预期：ElRobot 的响应质量 ≈ Menagerie SO-ARM100 质量
 ```
