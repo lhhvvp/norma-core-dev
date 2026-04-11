@@ -1,11 +1,11 @@
 """`MuJoCoWorld` — the sim server's owning handle to the MjModel/MjData
 pair plus manifest metadata needed to resolve capability lookups.
 
-The class is deliberately thin: it loads the MJCF, runs
-source_hash verification, indexes actuators/joints, and provides a
-threading.Lock so the scheduler and IPC threads can coordinate. Higher-
-level behaviour (actuation application, snapshot construction) lives
-in sibling modules that take a `MuJoCoWorld` by reference.
+The class is deliberately thin: it loads the MJCF, indexes
+actuators/joints, and provides a threading.Lock so the scheduler and
+IPC threads can coordinate. Higher-level behaviour (actuation
+application, snapshot construction) lives in sibling modules that take
+a `MuJoCoWorld` by reference.
 """
 from __future__ import annotations
 

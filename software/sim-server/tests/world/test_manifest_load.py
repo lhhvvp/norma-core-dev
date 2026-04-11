@@ -1,4 +1,4 @@
-"""Tests for world.manifest loader + source_hash verification."""
+"""Tests for world.manifest loader."""
 from pathlib import Path
 
 import pytest
