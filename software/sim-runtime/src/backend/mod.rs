@@ -10,6 +10,7 @@
 //! has leaked.
 
 pub(crate) mod child_process;
+pub(crate) mod external_socket;
 pub(crate) mod mock;
 pub(crate) mod runtime_dir;
 pub(crate) mod transport;
