@@ -59,9 +59,9 @@ impl ActuationSender {
     }
 
     pub async fn send(&self, batch: ActuationBatch) -> Result<(), SimRuntimeError> {
-        // Prost 0.12 generates `TryFrom<i32>` for enumerations. Mirrors the
-        // pattern used by st3215/src/state.rs:306 which does
-        // `St3215SignalType::try_from(envelope.signal_type)`.
+        // Prost 0.12 generates `TryFrom<i32>` for enumerations. Mirrors
+        // the pattern used by the existing servo-driver crate's state
+        // module (try_from + unwrap_or(Unspecified) on the i32 field).
         match QosLane::try_from(batch.lane).unwrap_or(QosLane::QosUnspecified) {
             QosLane::QosLossySetpoint => match self.lossy_tx.try_send(batch) {
                 Ok(()) => Ok(()),

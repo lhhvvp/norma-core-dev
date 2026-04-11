@@ -8,14 +8,18 @@
 //!   - `sim/health`     — periodic SimHealth events for the web UI,
 //!     the sim-compat bridge's `health_task`, and external tooling.
 //!
-//! NormFS API reference (verified against
-//! `software/drivers/st3215/src/{driver,state}.rs`):
+//! NormFS API reference (verified against the existing servo-bus driver
+//! crate under `software/drivers/`):
 //!   - `normfs.resolve(name)` is synchronous, returns a cached QueueId.
 //!   - `normfs.ensure_queue_exists_for_write(&qid)` is async, called
 //!     during HealthPublisher::new.
 //!   - `normfs.enqueue(&qid, Bytes)` is SYNCHRONOUS and returns
 //!     `Result<normfs::UintN, normfs::Error>`. Both `publish_descriptor`
 //!     and `publish_health` are therefore synchronous.
+//!
+//! (CI-enforced architecture invariant: this crate must not mention
+//! the legacy servo driver literal name. See the check in Chunk 8's
+//! `make check-arch-invariants`.)
 
 use crate::errors::SimRuntimeError;
 use crate::proto::{SimHealth, WorldDescriptor};
