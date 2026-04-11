@@ -5,10 +5,9 @@
 //! MVP-1 stores the registry in `SimulationRuntime` but does not yet
 //! expose it; the `#[allow(dead_code)]` attributes below are intentional
 //! — the fields and accessors will be wired up when MVP-2 adds the
-//! `SimulationRuntime::registry()` public getter consumed by bridges
-//! other than `st3215-compat-bridge` (which goes through its own
-//! preset file). Removing them now would delete scaffolding we are
-//! about to use.
+//! `SimulationRuntime::registry()` public getter consumed by compat
+//! bridges that do not ship their own preset file. Removing them now
+//! would delete scaffolding we are about to use.
 
 use crate::proto::{RobotDescriptor, WorldDescriptor};
 use std::collections::HashMap;
