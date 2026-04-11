@@ -104,8 +104,8 @@ If any step fails, see the chunk-specific troubleshooting notes below.
 - **Step 6 gripper sliders move but the jaws don't** → regression on
   the tendon equality; run the pytest P0 demo
   `pytest software/sim-server/tests/world/test_mimic_gripper.py -v`
-  and investigate `hardware/elrobot/simulation/worlds/gen.py` Phase
-  2c if it fails.
+  and investigate the `<tendon>` + `<equality>` blocks in
+  `hardware/elrobot/simulation/elrobot_follower.xml` if it fails.
 
 ## Architecture
 
