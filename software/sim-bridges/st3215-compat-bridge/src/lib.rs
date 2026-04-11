@@ -17,6 +17,5 @@ pub(crate) mod preset_loader;
 pub(crate) mod state_task;
 
 pub use errors::BridgeError;
-// Config type lives in station-iface (avoids circular dep); the
-// re-export below is un-commented after Task 7.2 adds it.
-// pub use station_iface::config::St3215CompatBridgeConfig;
+// Config types live in station-iface (avoids circular dep).
+pub use station_iface::config::{Bridges, St3215CompatBridgeConfig};

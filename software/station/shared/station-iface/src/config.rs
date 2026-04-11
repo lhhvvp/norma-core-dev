@@ -314,6 +314,120 @@ impl SimRuntimeConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ST3215 compat bridge configuration
+// ---------------------------------------------------------------------------
+//
+// Hosted in station_iface (not in st3215-compat-bridge) to mirror the
+// circular-dependency fix used for SimRuntimeConfig. The bridge depends on
+// station_iface; station_iface's top-level Config needs to embed the
+// bridge config for YAML deserialisation; circular avoided by keeping
+// config types in the "config-layer" crate.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct St3215CompatBridgeConfig {
+    pub enabled: bool,
+    #[serde(rename = "robot-id")]
+    pub robot_id: String,
+    #[serde(rename = "preset-path")]
+    pub preset_path: PathBuf,
+    #[serde(rename = "legacy-bus-serial")]
+    pub legacy_bus_serial: String,
+}
+
+impl St3215CompatBridgeConfig {
+    /// Validate the compat bridge config in isolation.
+    ///
+    /// The single structural invariant is that `legacy_bus_serial`
+    /// MUST start with `sim://` — a hard boundary between simulated
+    /// and real hardware bus serials that eliminates an entire class
+    /// of "shadow mode routes commands to the wrong bus" bugs at
+    /// config load time.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if !self.legacy_bus_serial.starts_with("sim://") {
+            return Err(
+                "bridges.st3215_compat.legacy-bus-serial MUST start with \
+                 'sim://' to ensure structural separation from real \
+                 hardware bus serials",
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Bridges {
+    #[serde(
+        rename = "st3215_compat",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub st3215_compat: Option<St3215CompatBridgeConfig>,
+}
+
+impl Bridges {
+    pub fn is_empty(&self) -> bool {
+        self.st3215_compat.is_none()
+    }
+}
+
+#[cfg(test)]
+mod bridge_config_tests {
+    use super::*;
+
+    fn base() -> St3215CompatBridgeConfig {
+        St3215CompatBridgeConfig {
+            enabled: true,
+            robot_id: "elrobot_follower".into(),
+            preset_path: PathBuf::from(
+                "software/sim-bridges/st3215-compat-bridge/presets/elrobot-follower.yaml",
+            ),
+            legacy_bus_serial: "my-custom-bus".into(),
+        }
+    }
+
+    #[test]
+    fn test_disabled_is_ok() {
+        let mut cfg = base();
+        cfg.enabled = false;
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_legacy_bus_serial_must_have_sim_prefix() {
+        let cfg = base();
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.contains("sim://"),
+            "error does not mention the required prefix: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_sim_prefix_accepted() {
+        let mut cfg = base();
+        cfg.legacy_bus_serial = "sim://bus0".into();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_bridges_is_empty_default() {
+        let b = Bridges::default();
+        assert!(b.is_empty());
+    }
+
+    #[test]
+    fn test_bridges_is_empty_after_set() {
+        let mut b = Bridges::default();
+        b.st3215_compat = Some(base());
+        assert!(!b.is_empty());
+    }
+}
+
 #[cfg(test)]
 mod sim_runtime_config_tests {
     use super::*;
