@@ -1,0 +1,27 @@
+[package]
+name = "sim-runtime"
+version.workspace = true
+edition = "2021"
+description = "SimulationRuntime subsystem: capability-keyed world state for Station."
+
+[dependencies]
+tokio = { workspace = true }
+normfs = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+log = { workspace = true }
+tokio-util = { version = "0.7", features = ["codec"] }
+thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+station_iface = { path = "../station/shared/station-iface" }
+
+[build-dependencies]
+prost-build = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
+serde_yaml = "0.9"
