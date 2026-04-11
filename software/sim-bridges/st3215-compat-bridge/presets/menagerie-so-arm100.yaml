@@ -1,0 +1,58 @@
+# MVP-2 Phase 1 — ST3215 compat bridge preset for Menagerie trs_so_arm100.
+# Maps Menagerie's actuator names (auto-synthesized from MJCF) to fake
+# ST3215 motor_ids so the web UI's slider viewer can display them.
+#
+# This preset is a PERMANENT REGRESSION FIXTURE alongside
+# menagerie_so_arm100.scene.yaml. Do not delete when Phase 2 ships.
+
+robot_id: default_robot
+legacy_bus_serial: "sim://menagerie-so-arm100"
+
+motors:
+  - actuator_id: Rotation
+    motor_id: 1
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: Pitch
+    motor_id: 2
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: Elbow
+    motor_id: 3
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: Wrist_Pitch
+    motor_id: 4
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: Wrist_Roll
+    motor_id: 5
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: Jaw
+    motor_id: 6
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
