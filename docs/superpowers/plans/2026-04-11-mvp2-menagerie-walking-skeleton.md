@@ -80,16 +80,18 @@ Use the Read tool on `/tmp/menagerie/trs_so_arm100/scene.xml`. Note:
 - [ ] **Step 4: Read trs_so_arm100.xml and characterize joints**
 
 Use the Read tool on `/tmp/menagerie/trs_so_arm100/trs_so_arm100.xml`. Characterize:
-- Number of `<joint>` elements (expected: 5-6 revolute + gripper)
+- Number of `<joint>` elements (**expected: 5 revolute + 1 gripper = 6 actuators total**; verified against Menagerie CHANGELOG 2025-06-09 tuning as 5-DOF SO-100; see also upstream plan research notes)
 - Presence of `<default>` block with `<joint armature="..." damping="..."/>` (REQUIRED for spec viability)
 - Actuator type (expected: `<position>` for revolute + something for gripper)
 - Gripper implementation: `<tendon>` + `<equality>`? `<weld>`? Or simple prismatic?
 - Mesh path convention: relative to `assets/`?
 - `<option>` block with timestep/gravity/integrator
 
-Document findings in a scratch note. This info is needed for Chunk 4 (ElRobot MJCF construction).
+Document findings in a scratch note. This info is needed for Chunk 4 (ElRobot MJCF construction). **Also record the tuning timestamp from the CHANGELOG** — the 2025-06-09 update matched joint limits to real hardware and is the current canonical version.
 
 **If no `armature` attribute is present anywhere in the default block**: STOP. The whole MVP-2 fork strategy relies on Menagerie having tuned armature values. Report to user and re-examine spec.
+
+**Topology gap warning (read before Chunk 5)**: Menagerie ships SO-100 only as 5-DOF. There is **no SO-101 variant in Menagerie** as of 2026-04. ElRobot is 7+1 DOF = 8 actuators, so the gap is **3 extra joints** (likely M2 Shoulder Roll + M7 Wrist Yaw + one more shoulder or wrist DOF — confirm by comparing URDF axes in Chunk 5 Task 5.1). If you want a 6-DOF fallback, the upstream [TheRobotStudio/SO-ARM100/Simulation/SO101](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101) has SO-101 MJCF, but it is **auto-generated via onshape-to-robot and not hand-tuned** — armature values will be missing/zero. Prefer Menagerie's hand-tuned 5-DOF as parameter source + nearest-neighbor estimate the 3 extra joints.
 
 - [ ] **Step 5: Verify LICENSE is Apache 2.0**
 
@@ -109,7 +111,32 @@ cd /tmp/menagerie && git rev-parse HEAD
 
 Record the SHA. This will go into VENDOR.md in task 1.2.
 
-**Gate for Task 1.1:** All 6 steps pass. If any fail, STOP and report. Do not proceed to task 1.2.
+- [ ] **Step 7: Clone and read `lachlanhurst/so100-mujoco-sim` as architecture reference**
+
+**Rationale:** `lachlanhurst/so100-mujoco-sim` is a MIT-licensed project that layers `MuJoCo + Menagerie SO-ARM100 MJCF + LeRobot control + Qt UI` — **architecturally almost identical to MVP-2** (just swap the Qt UI + LeRobot control for station's web UI + `st3215-compat-bridge`). Reading how they bridged Menagerie MJCF into a live control stack may save significant debugging time in Chunk 4 (walking skeleton) and Chunk 5 (ElRobot MJCF construction).
+
+This is **research-only**: no code is copied, nothing is vendored. We read it, take notes, and move on. License is MIT so even if we did copy patterns, it would be attribution-compatible.
+
+```bash
+cd /tmp && rm -rf so100-mujoco-sim && git clone --depth 1 https://github.com/lachlanhurst/so100-mujoco-sim.git
+```
+
+Expected: clone succeeds. Then read:
+- The main sim loop file (likely `sim_runner.py`, `main.py`, or `app.py` — find it via `ls /tmp/so100-mujoco-sim/`)
+- How they load the Menagerie MJCF (path resolution, scene file vs main file, any override strategy)
+- How they wire slider inputs to MuJoCo `data.ctrl` (does it use the MVP-1 `ActuationApplier` pattern or something else?)
+- How they handle the gripper specifically (tendon equality, or a different approach?)
+
+**Document findings in a scratch note** — specifically any technique that differs from MVP-1's approach. Topics to look for:
+1. Does the repo compute `actuator_gaintype`/`biastype` for classification, or does it use a simpler approach?
+2. Does it handle collision primitive substitution (what MVP-1 struggled with)?
+3. Does it use `<include>` for scene.xml composition, or a flat MJCF?
+
+These findings inform Chunk 4's walking skeleton implementation decisions and Chunk 5 Task 5.2's hand-written MJCF structure.
+
+**No commit, no file copy — pure research.** After reading, leave the clone at `/tmp/so100-mujoco-sim` for potential reference during Chunks 4-5.
+
+**Gate for Task 1.1:** All 7 steps pass. If any fail, STOP and report. Do not proceed to task 1.2.
 
 ---
 
@@ -3134,6 +3161,14 @@ Task 4.5 must have a Y outcome. If N, STOP and debug before proceeding to Chunk 
 
 **Rationale:** Before writing the MJCF, read Menagerie's `trs_so_arm100.xml` carefully and produce an explicit mapping from each ElRobot joint to its Menagerie analog (if any), recording the armature/damping/inertial values we plan to copy. This makes Chunk 5's subsequent MJCF work deterministic and auditable.
 
+**Topology baseline (confirmed 2026-04-11 via external research):**
+
+- **Menagerie SO-ARM100 is 5-DOF** (5 revolute + 1 gripper = 6 actuators). Last tuning 2025-06-09 (joint limits matched to real hardware).
+- **Menagerie has no SO-101 variant.** The upstream `TheRobotStudio/SO-ARM100/Simulation/SO101` has a 6-DOF SO-101 MJCF but it is auto-generated via `onshape-to-robot` and **not hand-tuned** — armature values are missing/zero and cannot be directly copied.
+- **ElRobot is 7+1 DOF = 8 actuators**, so the gap is **3 extra joints** to nearest-neighbor estimate, not 2-3. Likely candidates (to be confirmed by URDF axis comparison in Step 2): M2 Shoulder Roll + M3 Shoulder Yaw + M7 Wrist Yaw, with M1/M4/M5/M6/M8 mapping cleanly to Menagerie's 5-DOF chain + gripper.
+
+Chunk 1 Task 1.1 Step 7's reading of `lachlanhurst/so100-mujoco-sim` may have surfaced additional insights about how another project mapped ElRobot-family arms to Menagerie — incorporate those notes here if relevant.
+
 - [ ] **Step 1: Read Menagerie's trs_so_arm100.xml**
 
 Use the Read tool on `hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/trs_so_arm100.xml`. Identify:
@@ -3167,23 +3202,31 @@ Create `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md`:
 
 ## 拓扑对照
 
-### Menagerie SO-ARM100（N 个 actuators）
-| Joint | 类型 | armature | damping | frictionloss | 备注 |
-|---|---|---|---|---|---|
-| {填入} | {填入} | {填入} | {填入} | {填入} | {填入} |
-| ... | | | | | |
+### Menagerie SO-ARM100（5 revolute + 1 gripper，**共 6 actuators，非 5-6**）
 
-### ElRobot (8 actuators)
+| Menagerie joint | 类型 | armature | damping | frictionloss | 备注 |
+|---|---|---|---|---|---|
+| {填入 j1 - 通常是 shoulder_pan/shoulder_lift/elbow/wrist_flex/wrist_roll 某一个} | hinge | {value} | {value} | {value} | {ElRobot 对应？} |
+| {填入 j2} | hinge | {value} | {value} | {value} | {ElRobot 对应？} |
+| {填入 j3} | hinge | {value} | {value} | {value} | {ElRobot 对应？} |
+| {填入 j4} | hinge | {value} | {value} | {value} | {ElRobot 对应？} |
+| {填入 j5} | hinge | {value} | {value} | {value} | {ElRobot 对应？} |
+| {填入 gripper} | {hinge/slide} | {value} | {value} | {value} | {ElRobot 对应？} |
+
+### ElRobot (7 revolute + 1 gripper = 8 actuators)
+
 | Joint | ElRobot URDF link | Menagerie analog | armature | damping | frictionloss | 来源 |
 |---|---|---|---|---|---|---|
-| M1 Shoulder Pitch | {link 1} | {menagerie joint} | {value} | {value} | {value} | menagerie direct |
-| M2 Shoulder Roll | {link 2} | **无对应** | {用 M1 值} | {用 M1 值} | {用 M1 值} | nearest-neighbor (M1) |
-| M3 Shoulder Yaw | {link 3} | {menagerie joint or none} | ... | ... | ... | ... |
-| M4 Elbow | {link 4} | {menagerie joint} | ... | ... | ... | menagerie direct |
-| M5 Wrist Roll | {link 5} | {menagerie joint} | ... | ... | ... | ... |
-| M6 Wrist Pitch | {link 6} | {menagerie joint} | ... | ... | ... | ... |
-| M7 Wrist Yaw | {link 7} | **无对应** | {用 M6 值} | {用 M6 值} | {用 M6 值} | nearest-neighbor (M6) |
-| M8 Gripper | {link 8} | {menagerie joint} | ... | ... | ... | ... |
+| M1 Shoulder Pitch | {link 1} | {likely shoulder_lift} | {copy from analog} | {copy} | {copy} | menagerie direct |
+| M2 Shoulder Roll | {link 2} | **无对应** | {estimate from M1} | {estimate} | {estimate} | nearest-neighbor (M1) |
+| M3 Shoulder Yaw | {link 3} | {likely shoulder_pan, or 无对应 if Menagerie's pan is pitch-axis} | ... | ... | ... | menagerie direct OR nearest-neighbor |
+| M4 Elbow | {link 4} | {elbow} | ... | ... | ... | menagerie direct |
+| M5 Wrist Roll | {link 5} | {wrist_roll if present; else nearest wrist joint} | ... | ... | ... | menagerie direct OR nearest-neighbor |
+| M6 Wrist Pitch | {link 6} | {wrist_flex} | ... | ... | ... | menagerie direct |
+| M7 Wrist Yaw | {link 7} | **无对应** | {estimate from M6} | {estimate} | {estimate} | nearest-neighbor (M6) |
+| M8 Gripper | {link 8} | {gripper} | ... | ... | ... | menagerie direct |
+
+**Expected independent joints: 3** (M2 Shoulder Roll + one of M3/M5 + M7 Wrist Yaw, depending on Menagerie's actual 5-joint chain — confirm by axis comparison).
 
 ## 参数继承策略
 
@@ -3194,14 +3237,15 @@ Create `docs/superpowers/specs/2026-04-11-mvp2-menagerie-comparison-table.md`:
 3. **Actuator kp/kv/forcerange**: Menagerie 默认值作为 ElRobot 的 baseline. 若 Phase 2 smoke test 过不了 Floor 4 step response, 允许 per-joint 微调
 4. **Gripper mimic**: Menagerie 使用 {tendon / weld / 其它}. ElRobot 保留 MVP-1 的 `<tendon><fixed>` + `<equality><tendon>` 实现（P0 不可破）
 
-## 独有关节的估值依据
+## 独有关节的估值依据（3 个关节，非 2）
 
 | ElRobot 关节 | 估值来源 | 备注 |
 |---|---|---|
-| M2 Shoulder Roll | M1 Shoulder Pitch | 同为 shoulder 组，惯量量级相近 |
-| M7 Wrist Yaw | M6 Wrist Pitch | 同为 wrist 组，惯量极小 |
+| {ElRobot-only #1, e.g. M2 Shoulder Roll} | {nearest Menagerie shoulder joint} | {同为 shoulder 组，惯量量级相近} |
+| {ElRobot-only #2, e.g. M3 Shoulder Yaw if Menagerie only has pan/lift} | {nearest shoulder joint} | {axis 最接近的} |
+| {ElRobot-only #3, e.g. M7 Wrist Yaw} | {nearest wrist joint} | {同为 wrist 组，惯量极小} |
 
-(填入实际策略。若 Menagerie 有多于 1 个 shoulder joint 或 wrist joint, 选择 axis 最接近的)
+(Fill in after confirming Menagerie's actual joint list in Step 1. The 3 independent joints may differ from the guess above — go by axis alignment, not joint name.)
 
 ## Risk notes
 
@@ -3272,7 +3316,7 @@ Use `/tmp/mvp1_gripper_block.txt` as the gripper section of the new MJCF (with a
 
 - [ ] **Step 3: Apply Menagerie-inherited `armature` / `damping` to joints**
 
-Using the comparison table from Task 5.1, add per-joint `armature=` and `damping=` attributes. Joints with Menagerie analogs get the analog values; M2/M7 (or whichever are ElRobot-unique) get nearest-neighbor estimates.
+Using the comparison table from Task 5.1, add per-joint `armature=` and `damping=` attributes. Joints with Menagerie analogs get the analog values; the **3 ElRobot-unique joints** (see Task 5.1's "独有关节的估值依据" section — likely M2 Shoulder Roll + one of M3/M5 + M7 Wrist Yaw) get nearest-neighbor estimates.
 
 Example:
 
