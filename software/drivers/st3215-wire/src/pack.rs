@@ -13,6 +13,21 @@ pub struct MotorInstance {
     pub voltage_nominal_v: f32,
 }
 
+#[cfg(test)]
+impl MotorInstance {
+    /// Test fixture: a centered-range motor with typical calibration.
+    /// Used by `pack.rs` and `unpack.rs` unit tests.
+    pub fn default_test() -> Self {
+        Self {
+            min_angle_steps: 0,
+            max_angle_steps: 4095,
+            offset_steps: 2048,
+            torque_limit: 500,
+            voltage_nominal_v: 12.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MotorSemanticState {
     pub position_rad: f32,
