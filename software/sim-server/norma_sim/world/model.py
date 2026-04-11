@@ -51,22 +51,22 @@ class MuJoCoWorld:
                     )
                 self._actuator_id_cache[act.mjcf_actuator] = idx
                 joint_idx = mujoco.mj_name2id(
-                    self.model, mujoco.mjtObj.mjOBJ_JOINT, act.urdf_joint
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, act.mjcf_joint
                 )
                 if joint_idx < 0:
                     raise ValueError(
-                        f"MJCF has no joint '{act.urdf_joint}' for "
+                        f"MJCF has no joint '{act.mjcf_joint}' for "
                         f"manifest actuator '{act.actuator_id}'"
                     )
-                self._joint_qposadr_cache[act.urdf_joint] = int(
+                self._joint_qposadr_cache[act.mjcf_joint] = int(
                     self.model.jnt_qposadr[joint_idx]
                 )
 
     def actuator_id_for(self, mjcf_actuator: str) -> Optional[int]:
         return self._actuator_id_cache.get(mjcf_actuator)
 
-    def joint_qposadr_for(self, urdf_joint: str) -> Optional[int]:
-        return self._joint_qposadr_cache.get(urdf_joint)
+    def joint_qposadr_for(self, mjcf_joint: str) -> Optional[int]:
+        return self._joint_qposadr_cache.get(mjcf_joint)
 
     def actuator_by_mjcf_name(self, mjcf_actuator: str) -> Optional[ActuatorManifest]:
         for robot in self.manifest.robots:

@@ -24,7 +24,7 @@ class SnapshotBuilder:
         for robot in world.manifest.robots:
             for act in robot.actuators:
                 ctrl_idx = world.actuator_id_for(act.mjcf_actuator)
-                qpos_addr = world.joint_qposadr_for(act.urdf_joint)
+                qpos_addr = world.joint_qposadr_for(act.mjcf_joint)
                 if ctrl_idx is None or qpos_addr is None:
                     continue
                 self._rows.append(

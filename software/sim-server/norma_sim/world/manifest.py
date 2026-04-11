@@ -43,7 +43,7 @@ class GripperMeta:
 class ActuatorManifest:
     actuator_id: str
     display_name: str
-    urdf_joint: str
+    mjcf_joint: str
     mjcf_actuator: str
     capability: ActuatorCapability
     actuator_gains: dict
@@ -155,7 +155,7 @@ def _parse_actuator(raw: dict[str, Any]) -> ActuatorManifest:
     return ActuatorManifest(
         actuator_id=raw["actuator_id"],
         display_name=raw["display_name"],
-        urdf_joint=raw["urdf_joint"],
+        mjcf_joint=raw["urdf_joint"],
         mjcf_actuator=raw["mjcf_actuator"],
         capability=cap,
         actuator_gains=dict(raw["actuator_gains"]),

@@ -81,7 +81,7 @@ class ActuationApplier:
             elif cmd.disable_torque is not None:
                 # MVP-1 equivalent: park ctrl at current qpos so the
                 # position controller holds.
-                joint_addr = self.world.joint_qposadr_for(actuator.urdf_joint)
+                joint_addr = self.world.joint_qposadr_for(actuator.mjcf_joint)
                 if joint_addr is not None:
                     self.world.data.ctrl[ctrl_idx] = float(
                         self.world.data.qpos[joint_addr]
