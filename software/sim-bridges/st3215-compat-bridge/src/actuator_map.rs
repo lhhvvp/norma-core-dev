@@ -38,6 +38,9 @@ impl ActuatorMap {
         self.by_motor_id.len()
     }
 
+    /// Companion to `len()` — clippy's `len_without_is_empty` lint
+    /// requires both; call sites only use `len()`.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.by_motor_id.is_empty()
     }

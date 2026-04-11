@@ -35,6 +35,7 @@ impl TempRuntimeDir {
         self.path.join("sim.sock")
     }
 
+    #[allow(dead_code)] // exposed for MVP-2 diagnostics (e.g. /sim/health)
     pub fn path(&self) -> &Path {
         &self.path
     }

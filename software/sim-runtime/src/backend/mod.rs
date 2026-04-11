@@ -35,6 +35,13 @@ pub(crate) trait WorldBackend: Send + 'static {
     async fn wait_terminated(self: Box<Self>) -> BackendTermination;
 
     /// Request graceful shutdown. Must be idempotent.
+    ///
+    /// MVP-1 does not yet call this — the supervisor relies on dropping
+    /// the backend to trigger cleanup (tokio runtime teardown kills the
+    /// subprocess) and the explicit `CancellationToken` path is deferred
+    /// to MVP-2. Keep the method in the trait so that landing a proper
+    /// cancel path is a 1-crate change.
+    #[allow(dead_code)]
     async fn shutdown(&mut self, grace: Duration) -> Result<(), SimRuntimeError>;
 }
 
@@ -47,6 +54,8 @@ pub(crate) struct BackendStarted {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // KilledBySupervisor / SignaledByOs are constructed by the
+                   // MVP-2 explicit-cancel shutdown path — see `shutdown` above.
 pub(crate) enum BackendTermination {
     Clean,
     Crashed {

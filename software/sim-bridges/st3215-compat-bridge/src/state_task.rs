@@ -12,7 +12,7 @@ use crate::errors::BridgeError;
 use bytes::Bytes;
 use normfs::NormFS;
 use prost::Message;
-use sim_runtime::proto::{ActuatorState, WorldSnapshot};
+use sim_runtime::proto::WorldSnapshot;
 use sim_runtime::SimulationRuntime;
 use station_iface::iface_proto::drivers::QueueDataType;
 use station_iface::StationEngine;
@@ -184,7 +184,7 @@ pub(crate) fn build_inference_bytes(
 mod tests {
     use super::*;
     use crate::preset_loader::{MotorEntry, RobotPreset};
-    use sim_runtime::proto::{ActuatorRef, WorldClock};
+    use sim_runtime::proto::{ActuatorRef, ActuatorState, WorldClock};
 
     fn two_motor_map() -> ActuatorMap {
         ActuatorMap::from_preset(&RobotPreset {

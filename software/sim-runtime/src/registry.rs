@@ -1,10 +1,19 @@
 //! `WorldRegistry` — in-memory index of the WorldDescriptor returned
 //! by the backend's handshake. Used by the runtime and downstream
 //! bridges to look up robots and actuators by ID.
+//!
+//! MVP-1 stores the registry in `SimulationRuntime` but does not yet
+//! expose it; the `#[allow(dead_code)]` attributes below are intentional
+//! — the fields and accessors will be wired up when MVP-2 adds the
+//! `SimulationRuntime::registry()` public getter consumed by bridges
+//! other than `st3215-compat-bridge` (which goes through its own
+//! preset file). Removing them now would delete scaffolding we are
+//! about to use.
 
 use crate::proto::{RobotDescriptor, WorldDescriptor};
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 pub(crate) struct WorldRegistry {
     pub world_name: String,
     pub robots: HashMap<String, RobotDescriptor>,
@@ -22,6 +31,7 @@ impl WorldRegistry {
         }
     }
 
+    #[allow(dead_code)]
     pub fn robot(&self, id: &str) -> Option<&RobotDescriptor> {
         self.robots.get(id)
     }

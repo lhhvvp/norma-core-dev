@@ -43,35 +43,34 @@ impl Config {
     ///
     /// Rules (all individually weak — NO driver ↔ bridge mutual
     /// exclusion, because shadow mode explicitly needs both):
-    ///   1. If `sim-runtime` is present, its own validate() passes.
-    ///   2. If `bridges.st3215_compat` is enabled, then:
-    ///      a. `sim-runtime` must be present and enabled, AND
-    ///      b. the bridge config's own validate() passes
-    ///         (which enforces the `sim://` prefix on
-    ///         legacy-bus-serial).
     ///
-    /// Rule (1) is a pure pass-through; rule (2) is the one
-    /// cross-field check. Both sim-runtime and bridges are
-    /// entirely orthogonal to `drivers.st3215` — a shadow config
-    /// with both real driver and sim+bridge enabled passes.
+    /// - If `sim-runtime` is present, its own `validate()` passes.
+    /// - If `bridges.st3215_compat` is enabled, then `sim-runtime`
+    ///   must be present and enabled, AND the bridge config's own
+    ///   `validate()` passes (which enforces the `sim://` prefix on
+    ///   legacy-bus-serial).
+    ///
+    /// The first rule is a pure pass-through; the second is the one
+    /// cross-field check. Both sim-runtime and bridges are entirely
+    /// orthogonal to `drivers.st3215` — a shadow config with both
+    /// real driver and sim+bridge enabled passes.
     pub fn validate(&self) -> Result<(), String> {
         if let Some(sim) = &self.sim_runtime {
             sim.validate().map_err(String::from)?;
         }
-        if let Some(bridge) = &self.bridges.st3215_compat {
-            if bridge.enabled {
-                let sim_enabled = self
-                    .sim_runtime
-                    .as_ref()
-                    .map_or(false, |s| s.enabled);
-                if !sim_enabled {
-                    return Err(
-                        "bridges.st3215_compat requires sim-runtime to be enabled"
-                            .into(),
-                    );
-                }
-                bridge.validate().map_err(String::from)?;
+        if let Some(bridge) = &self.bridges.st3215_compat
+            && bridge.enabled
+        {
+            let sim_enabled = self
+                .sim_runtime
+                .as_ref()
+                .is_some_and(|s| s.enabled);
+            if !sim_enabled {
+                return Err(
+                    "bridges.st3215_compat requires sim-runtime to be enabled".into(),
+                );
             }
+            bridge.validate().map_err(String::from)?;
         }
         Ok(())
     }
@@ -114,9 +113,11 @@ mod config_validate_tests {
 
     #[test]
     fn test_bridge_requires_sim_runtime() {
-        let mut c = Config::default();
-        c.bridges = Bridges {
-            st3215_compat: Some(base_bridge()),
+        let c = Config {
+            bridges: Bridges {
+                st3215_compat: Some(base_bridge()),
+            },
+            ..Config::default()
         };
         // sim_runtime is None — should fail.
         let err = c.validate().unwrap_err();
@@ -125,12 +126,14 @@ mod config_validate_tests {
 
     #[test]
     fn test_bridge_requires_sim_runtime_enabled() {
-        let mut c = Config::default();
         let mut sim = base_sim();
         sim.enabled = false;
-        c.sim_runtime = Some(sim);
-        c.bridges = Bridges {
-            st3215_compat: Some(base_bridge()),
+        let c = Config {
+            sim_runtime: Some(sim),
+            bridges: Bridges {
+                st3215_compat: Some(base_bridge()),
+            },
+            ..Config::default()
         };
         let err = c.validate().unwrap_err();
         assert!(err.contains("requires sim-runtime"));
@@ -138,10 +141,12 @@ mod config_validate_tests {
 
     #[test]
     fn test_sim_plus_bridge_passes() {
-        let mut c = Config::default();
-        c.sim_runtime = Some(base_sim());
-        c.bridges = Bridges {
-            st3215_compat: Some(base_bridge()),
+        let c = Config {
+            sim_runtime: Some(base_sim()),
+            bridges: Bridges {
+                st3215_compat: Some(base_bridge()),
+            },
+            ..Config::default()
         };
         assert!(c.validate().is_ok());
     }
@@ -152,14 +157,16 @@ mod config_validate_tests {
     /// bridges.st3215_compat.
     #[test]
     fn test_real_and_sim_can_coexist() {
-        let mut c = Config::default();
-        c.drivers.st3215 = Some(St3215Config::default());
-        c.sim_runtime = Some(base_sim());
         let mut bridge = base_bridge();
         bridge.legacy_bus_serial = "sim://elrobot-shadow".into();
-        c.bridges = Bridges {
-            st3215_compat: Some(bridge),
+        let mut c = Config {
+            sim_runtime: Some(base_sim()),
+            bridges: Bridges {
+                st3215_compat: Some(bridge),
+            },
+            ..Config::default()
         };
+        c.drivers.st3215 = Some(St3215Config::default());
         assert!(
             c.validate().is_ok(),
             "shadow mode config must validate: {:?}",
@@ -169,12 +176,14 @@ mod config_validate_tests {
 
     #[test]
     fn test_bridge_bad_prefix_rejected() {
-        let mut c = Config::default();
-        c.sim_runtime = Some(base_sim());
         let mut bridge = base_bridge();
         bridge.legacy_bus_serial = "not-sim".into();
-        c.bridges = Bridges {
-            st3215_compat: Some(bridge),
+        let c = Config {
+            sim_runtime: Some(base_sim()),
+            bridges: Bridges {
+                st3215_compat: Some(bridge),
+            },
+            ..Config::default()
         };
         let err = c.validate().unwrap_err();
         assert!(err.contains("sim://"));
@@ -581,8 +590,9 @@ mod bridge_config_tests {
 
     #[test]
     fn test_bridges_is_empty_after_set() {
-        let mut b = Bridges::default();
-        b.st3215_compat = Some(base());
+        let b = Bridges {
+            st3215_compat: Some(base()),
+        };
         assert!(!b.is_empty());
     }
 }
