@@ -46,3 +46,57 @@ all: build-all
 .PHONY: regen-mjcf
 regen-mjcf:
 	python3 hardware/elrobot/simulation/worlds/gen.py
+
+# —— Simulation targets ———————————————————————————————————————————————
+
+# Ubuntu 24.04 enforces PEP 668 on system Python 3.12, so `pip install`
+# without --break-system-packages fails. The sim-server is a pure-Python
+# source layout and the existing system site-packages already has
+# mujoco/numpy/pyyaml/pytest, so we run via PYTHONPATH instead of a
+# true install.
+SIM_PYTHONPATH := software/sim-server
+
+.PHONY: sim-run
+sim-run:
+	./target/debug/station -c software/station/bin/station/station-sim.yaml
+
+.PHONY: sim-standalone
+sim-standalone:
+	PYTHONPATH=$(SIM_PYTHONPATH) python3 -m norma_sim \
+	  --manifest hardware/elrobot/simulation/worlds/elrobot_follower.world.yaml \
+	  --socket /tmp/norma-sim-dev.sock \
+	  --physics-hz 500 \
+	  --publish-hz 100
+
+.PHONY: sim-external
+sim-external:
+	./target/debug/station -c software/station/bin/station/station-sim-external.yaml
+
+.PHONY: sim-shadow
+sim-shadow:
+	./target/debug/station -c software/station/bin/station/station-shadow.yaml
+
+.PHONY: sim-test
+sim-test: check-arch-invariants
+	cargo test -p st3215-wire
+	cargo test -p sim-runtime
+	cargo test -p st3215-compat-bridge
+	PYTHONPATH=$(SIM_PYTHONPATH) python3 -m pytest software/sim-server/tests/
+
+# Architecture invariants enforced by grep. These MUST pass before any
+# sim-related PR is merged — they encode the v2 architectural boundaries
+# that distinguish MVP-1 from v1 (see the spec review for context).
+.PHONY: check-arch-invariants
+check-arch-invariants:
+	@echo "Checking architecture invariants..."
+	@if grep -r -i "st3215" software/sim-runtime/src/ > /dev/null; then \
+	  echo "FAIL: sim-runtime has ST3215 reference"; exit 1; fi
+	@if grep -r -i "st3215" software/sim-server/norma_sim/ > /dev/null; then \
+	  echo "FAIL: norma_sim has ST3215 reference"; exit 1; fi
+	@if grep -r -E "tokio|normfs|station_iface|StationEngine" software/drivers/st3215-wire/src/ > /dev/null; then \
+	  echo "FAIL: st3215-wire has forbidden I/O dependency"; exit 1; fi
+	@if grep -q "^pub trait WorldBackend" software/sim-runtime/src/backend/mod.rs; then \
+	  echo "FAIL: WorldBackend trait must be pub(crate), not pub"; exit 1; fi
+	@if cargo tree -p sim-runtime 2>/dev/null | grep -q "st3215-wire"; then \
+	  echo "FAIL: sim-runtime transitively depends on st3215-wire"; exit 1; fi
+	@echo "All architecture invariants hold ✓"
