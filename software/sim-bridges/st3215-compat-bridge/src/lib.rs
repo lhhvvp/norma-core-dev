@@ -13,7 +13,7 @@ pub(crate) mod actuator_map;
 pub(crate) mod command_task;
 pub(crate) mod errors;
 pub(crate) mod health_task;
-pub(crate) mod preset_loader;
+pub mod preset_loader;
 pub(crate) mod state_task;
 
 pub use errors::BridgeError;
