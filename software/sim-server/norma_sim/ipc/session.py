@@ -55,16 +55,35 @@ class ClientSession:
         self._closed = False
 
     async def run(self) -> None:
-        """Main entry: handshake → reader + writer loops in parallel."""
+        """Main entry: handshake → reader + writer loops in parallel.
+
+        We use ``asyncio.wait`` with ``FIRST_COMPLETED`` instead of
+        ``gather`` so that when one loop exits (typically the reader
+        on EOF) the other is cancelled promptly. Otherwise the
+        writer_loop would block forever on ``snapshot_queue.get()``
+        and Server.wait_closed() would never return.
+        """
         try:
             ok = await self._handshake()
             if not ok:
                 return
-            await asyncio.gather(
-                self._reader_loop(),
-                self._writer_loop(),
-                return_exceptions=True,
-            )
+            reader_task = asyncio.create_task(self._reader_loop())
+            writer_task = asyncio.create_task(self._writer_loop())
+            try:
+                done, pending = await asyncio.wait(
+                    {reader_task, writer_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                for task in (reader_task, writer_task):
+                    if not task.done():
+                        task.cancel()
+                # Drain cancellations so exceptions propagate to logs.
+                for task in (reader_task, writer_task):
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
         finally:
             await self._close()
 
