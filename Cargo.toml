@@ -4,6 +4,7 @@ members = [
   "software/drivers/inferences",
   "software/drivers/motors-mirroring",
   "software/drivers/st3215",
+  "software/drivers/st3215-wire",
   "software/drivers/sysinfod",
   "software/drivers/usbvideo",
   "software/station/bin/station",

@@ -2354,6 +2354,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "st3215-wire"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
