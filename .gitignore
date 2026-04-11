@@ -15,3 +15,6 @@ station_data/sim-*.log
 software/station/clients/station-viewer/node_modules/
 software/station/clients/station-viewer/dist/
 js-vendor/
+
+# Git worktrees for isolated MVP execution (using-git-worktrees skill)
+.worktrees/
