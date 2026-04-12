@@ -222,23 +222,13 @@ async def _async_main(args: argparse.Namespace) -> int:
                 _rt_viser_server = [None]
                 _rt_gui_handles: dict[str, object] = {}
                 _rt_renderers: dict[str, object] = {}
+                _rt_cam_names = list(args.cameras) if args.cameras else []
 
                 def _init_mjviser():
-                    import mujoco as _mj
                     vs = viser.ViserServer(port=args.render_port)
                     scene = ViserMujocoScene(vs, world.model, num_envs=1)
                     mjv_scene_holder[0] = scene
                     _rt_viser_server[0] = vs
-                    # Init camera renderers for GUI feed
-                    if args.cameras:
-                        from .scheduler.stepping import DEFAULT_CAMERAS
-                        for name in args.cameras:
-                            if name in DEFAULT_CAMERAS:
-                                cfg = DEFAULT_CAMERAS[name]
-                                _rt_renderers[name] = {
-                                    "renderer": _mj.Renderer(world.model, height=cfg.height, width=cfg.width),
-                                    "cfg": cfg,
-                                }
                     log.info(
                         "mjviser started (realtime)",
                         extra={"extra_fields": {"port": args.render_port}},
@@ -262,10 +252,20 @@ async def _async_main(args: argparse.Namespace) -> int:
             # Push to mjviser (same thread as physics, no lock needed)
             if mjv_scene_holder[0] is not None:
                 mjv_scene_holder[0].update_from_mjdata(world.data)
-                # Render camera feeds to GUI sidebar
+                # Render camera feeds to GUI sidebar (lazy init from physics thread)
                 vs = _rt_viser_server[0]
-                if vs is not None and _rt_renderers:
+                if vs is not None and _rt_cam_names:
                     import mujoco as _mj
+                    # Lazy init renderers on first call (from physics thread — no race)
+                    if not _rt_renderers:
+                        from .scheduler.stepping import DEFAULT_CAMERAS
+                        for name in _rt_cam_names:
+                            if name in DEFAULT_CAMERAS:
+                                cfg = DEFAULT_CAMERAS[name]
+                                _rt_renderers[name] = {
+                                    "renderer": _mj.Renderer(world.model, height=cfg.height, width=cfg.width),
+                                    "cfg": cfg,
+                                }
                     for cam_name, r in _rt_renderers.items():
                         mjcf_cam_id = _mj.mj_name2id(
                             world.model, _mj.mjtObj.mjOBJ_CAMERA, cam_name
