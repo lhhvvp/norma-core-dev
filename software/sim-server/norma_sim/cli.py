@@ -252,9 +252,9 @@ async def _async_main(args: argparse.Namespace) -> int:
             # Push to mjviser (same thread as physics, no lock needed)
             if mjv_scene_holder[0] is not None:
                 mjv_scene_holder[0].update_from_mjdata(world.data)
-                # Render camera feeds to GUI sidebar (lazy init from physics thread)
+                # Render camera feeds to GUI sidebar at ~10Hz (not every publish)
                 vs = _rt_viser_server[0]
-                if vs is not None and _rt_cam_names:
+                if vs is not None and _rt_cam_names and tick % 10 == 0:
                     import mujoco as _mj
                     # Lazy init renderers on first call (from physics thread — no race)
                     if not _rt_renderers:
