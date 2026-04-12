@@ -149,7 +149,7 @@ pub(crate) fn build_inference_bytes(
             error: None,
             range_min: entry.min_angle_steps as u32,
             range_max: entry.max_angle_steps as u32,
-            range_freezed: false,
+            range_freezed: true,
             last_command: None,
         });
     }
