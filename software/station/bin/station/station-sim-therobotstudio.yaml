@@ -13,7 +13,7 @@ sim-runtime:
     - -m
     - norma_sim
     - --manifest
-    - hardware/elrobot/simulation/manifests/norma/therobotstudio_so101.scene.yaml
+    - hardware/elrobot/simulation/manifests/norma/therobotstudio_so101_tabletop.scene.yaml
     - --physics-hz
     - "500"
     - --publish-hz

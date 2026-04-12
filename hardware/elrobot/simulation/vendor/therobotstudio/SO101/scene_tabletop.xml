@@ -24,6 +24,10 @@
 
         <!-- Cube target -->
         <material name="cube_red" rgba="0.9 0.2 0.2 1" />
+
+        <!-- Camera marker -->
+        <material name="cam_body" rgba="0.2 0.2 0.2 0.8" />
+        <material name="cam_lens" rgba="0.1 0.1 0.9 0.9" />
     </asset>
 
     <worldbody>
@@ -50,5 +54,25 @@
                 fovy="50" />
         <camera name="wrist.top" pos="-0.05 -0.30 0.35" xyaxes="1 0 0 0 0.5 1"
                 fovy="55" />
+
+        <!-- Camera markers: visual-only bodies showing camera positions.
+             Dark box = body, blue cylinder = lens pointing in view direction.
+             contype/conaffinity=0 → no physics collision. -->
+        <body name="cam_top_marker" pos="0.15 0.0 0.50">
+            <geom type="box" size="0.02 0.015 0.012"
+                  material="cam_body" contype="0" conaffinity="0" />
+            <!-- lens points down (-z) matching camera "top" orientation -->
+            <geom type="cylinder" size="0.008 0.01" pos="0 0 -0.02"
+                  material="cam_lens" contype="0" conaffinity="0" />
+        </body>
+
+        <body name="cam_wrist_marker" pos="-0.05 -0.30 0.35"
+              quat="0.924 0.383 0 0">
+            <!-- quat rotates to match wrist.top camera orientation (~45° tilt) -->
+            <geom type="box" size="0.02 0.015 0.012"
+                  material="cam_body" contype="0" conaffinity="0" />
+            <geom type="cylinder" size="0.008 0.01" pos="0 0 -0.02"
+                  material="cam_lens" contype="0" conaffinity="0" />
+        </body>
     </worldbody>
 </mujoco>
