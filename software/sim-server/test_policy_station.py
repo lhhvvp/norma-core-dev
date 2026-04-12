@@ -93,6 +93,30 @@ async def main():
             shape = tuple(feat.shape if hasattr(feat, "shape") else feat["shape"])
             image_keys.append((key, shape))
 
+    # ── 1b. Local MuJoCo model for camera rendering ──
+    import mujoco
+    mjcf_path = repo_root / "hardware/elrobot/simulation/vendor/therobotstudio/SO101/scene.xml"
+    mj_model = mujoco.MjModel.from_xml_path(str(mjcf_path))
+    mj_data = mujoco.MjData(mj_model)
+
+    # Camera configs matching stepping.py defaults
+    from norma_sim.scheduler.stepping import DEFAULT_CAMERAS
+    renderers = {}
+    for key, shape in image_keys:
+        cam_name = key.replace("observation.images.", "")
+        if cam_name in DEFAULT_CAMERAS:
+            cfg = DEFAULT_CAMERAS[cam_name]
+            renderers[key] = {
+                "renderer": mujoco.Renderer(mj_model, height=cfg.height, width=cfg.width),
+                "cam_cfg": cfg,
+            }
+            logger.info(f"  local camera: {cam_name} ({cfg.width}x{cfg.height})")
+    has_cameras = bool(renderers)
+    if has_cameras:
+        logger.info(f"  camera rendering: LOCAL MuJoCo (real images!)")
+    else:
+        logger.info(f"  camera rendering: dummy (no matching presets)")
+
     # ── 2. Connect to Station ──
     logger.info("Connecting to Station...")
     from station_py import new_station_client, send_commands, StreamEntry
@@ -129,7 +153,8 @@ async def main():
     # ── 4. Policy loop ──
     logger.info("")
     logger.info("=== Running ACT policy through Station (Path B) ===")
-    logger.info("=== Watch :8889 Web UI + :8012 mjviser ===")
+    logger.info(f"=== Camera: {'LOCAL MuJoCo render' if has_cameras else 'dummy'} ===")
+    logger.info("=== Watch :8889 Web UI ===")
     logger.info("=== Ctrl+C to stop ===")
     logger.info("")
 
@@ -161,9 +186,35 @@ async def main():
             state_tensor = torch.tensor(joint_rads, dtype=torch.float32).unsqueeze(0).to(device)
             batch = {"observation.state": state_tensor}
 
-            # Dummy camera images
-            for key, shape in image_keys:
-                batch[key] = torch.zeros(1, *shape, dtype=torch.float32).to(device)
+            # Camera images: render locally from joint state
+            if has_cameras:
+                # Copy joint rads into local MuJoCo data
+                for j, m in enumerate(MOTORS):
+                    # Find joint qposadr for this motor
+                    joint_idx = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, m["name"])
+                    if joint_idx >= 0:
+                        mj_data.qpos[mj_model.jnt_qposadr[joint_idx]] = joint_rads[j]
+                mujoco.mj_forward(mj_model, mj_data)
+
+                for key, shape in image_keys:
+                    if key in renderers:
+                        r = renderers[key]
+                        cam = mujoco.MjvCamera()
+                        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                        cam.lookat[:] = r["cam_cfg"].lookat
+                        cam.distance = r["cam_cfg"].distance
+                        cam.azimuth = r["cam_cfg"].azimuth
+                        cam.elevation = r["cam_cfg"].elevation
+                        r["renderer"].update_scene(mj_data, camera=cam)
+                        pixels = r["renderer"].render()
+                        img = pixels.astype(np.float32) / 255.0
+                        img_t = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).to(device)
+                        batch[key] = img_t
+                    else:
+                        batch[key] = torch.zeros(1, *shape, dtype=torch.float32).to(device)
+            else:
+                for key, shape in image_keys:
+                    batch[key] = torch.zeros(1, *shape, dtype=torch.float32).to(device)
 
             # Inference
             with torch.no_grad():
