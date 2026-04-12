@@ -49,7 +49,7 @@ Before beginning Phase A, confirm:
 ```bash
 cd /home/yuan/proj/norma-core
 git branch --show-current   # must print: main
-git log --oneline -1         # HEAD must be aa65fd3 (final spec commit) or newer
+git log --oneline -1         # HEAD must be 244bcd3 (this plan commit) or aa65fd3 (final spec commit) or newer
 git status --short           # must be empty (clean tree) OR only have expected untracked
 ```
 
@@ -125,7 +125,7 @@ hardware/elrobot/simulation/
 
 The `assets/` and `elrobot_follower.urdf` at `hardware/elrobot/simulation/` no longer exist after this chunk.
 
-**Total operations**: 19 STL `git mv` + 1 URDF `git mv` + 1 MJCF edit + 1 test fixture edit (covering 3 things: path layer / skip→fail / unused param fix / Item 2 docstring fix) + 1 README edit + 1 CHANGELOG edit (covering 2 things: line 82 + new entry + Item 3 TBD backfill) + 1 VERSION edit + 1 robot.yaml edit = **26 file operations**, all committed atomically.
+**Total operations**: 19 STL `git mv` + 1 URDF `git mv` + 1 MJCF edit + 1 test fixture edit (covering 4 things: path layer / skip→fail / unused param fix / Item 2 docstring fix) + 1 README edit (2 sub-edits) + 1 CHANGELOG edit (covering 3 things: line 82 + new [0.2.0] entry + Item 3 TBD backfill) + 1 VERSION edit + 1 robot.yaml edit = **26 file operations**, all committed atomically.
 
 ---
 
@@ -350,7 +350,7 @@ Expected:
 
 If the rename count is < 19, STOP and investigate. Some `git mv` may have failed silently.
 
-- [ ] **Step B.3: Verify the source `assets/` directory is now empty (and remove it)**
+- [ ] **Step B.3: Verify the source `assets/` directory is now empty**
 
 ```bash
 ls hardware/elrobot/simulation/assets/ 2>&1
@@ -1130,6 +1130,8 @@ Task 1 is complete when:
 8. ✅ The three-way version sync (VERSION file, robot.yaml `version.current`, CHANGELOG `[0.2.0]`) all show `0.2.0`.
 
 If all 8 criteria are met, Chunk 1 is done. Proceed to MVP-3 Chunk 2 (A3 — Scene Wrapper) brainstorming as a separate session.
+
+**Note for Chunk 2 plan author**: this chunk introduces an intentional `<TBD-mvp3-chunk1>` placeholder string in `mujoco/elrobot_follower/README.md` (Step C.3 Edit 3b). It's a chicken-and-egg backfill — the plan can't write its own commit SHA, so the placeholder is intentional. **Chunk 2's plan must include a step to backfill this placeholder** with the actual Chunk 1 commit SHA, mirroring how this Chunk 1 plan backfills the Chunk 0 SHA in CHANGELOG.md (Step C.4 Edit 4b). The placeholder is not enforced by any grep gate in this chunk because the plan author specifically chose not to make it a Phase G.8 trigger (the grep pattern doesn't match `<TBD-mvp3-chunk1>`), so it survives Chunk 1's commit cleanly and waits for Chunk 2 to fix it.
 
 ---
 
