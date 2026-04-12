@@ -135,6 +135,11 @@ message ActuatorDescriptor {
   string actuator_id = 1;
   string display_name = 2;
   ActuatorCapability capability = 3;
+  // MJCF actuator ctrlrange — used by the bridge to compute the
+  // correct ST3215 step range for each actuator, so the web UI
+  // slider maps 0-100% to the actual usable joint range.
+  double ctrl_range_min = 4;
+  double ctrl_range_max = 5;
 }
 
 message SensorDescriptor {

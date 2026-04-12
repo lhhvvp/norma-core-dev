@@ -38,7 +38,10 @@ _SENSOR_KIND_MAP = {
 }
 
 
-def _build_actuator_descriptor(act: ActuatorManifest) -> "world_pb.ActuatorDescriptor":
+def _build_actuator_descriptor(
+    act: ActuatorManifest,
+    ctrl_range: tuple[float, float] | None = None,
+) -> "world_pb.ActuatorDescriptor":
     kind = _ACT_KIND_MAP.get(act.capability.kind)
     if kind is None:
         raise ValueError(
@@ -52,10 +55,13 @@ def _build_actuator_descriptor(act: ActuatorManifest) -> "world_pb.ActuatorDescr
         effort_limit=float(act.capability.effort_limit or 0.0),
         velocity_limit=float(act.capability.velocity_limit or 0.0),
     )
+    cr_min, cr_max = ctrl_range if ctrl_range else (0.0, 0.0)
     return world_pb.ActuatorDescriptor(
         actuator_id=act.actuator_id,
         display_name=act.display_name,
         capability=cap,
+        ctrl_range_min=cr_min,
+        ctrl_range_max=cr_max,
     )
 
 
@@ -86,15 +92,27 @@ def build_world_descriptor(
     - `manifest.urdf_path` may be None in MVP-2; this function does not
       read urdf_path, so the None case is transparent.
 
-    `world` is accepted for future capability-derived limit validation
-    but is currently unused.
+    `world` is used to extract MJCF ctrlrange per actuator, which the
+    bridge uses to compute correct servo step ranges for the web UI.
     """
-    del world  # unused; see docstring
+    # Build a lookup: mjcf_actuator_name → (ctrl_range_min, ctrl_range_max)
+    ctrl_ranges: dict[str, tuple[float, float]] = {}
+    if world is not None:
+        import mujoco
+        for i in range(world.model.nu):
+            name = mujoco.mj_id2name(
+                world.model, mujoco.mjtObj.mjOBJ_ACTUATOR, i
+            )
+            if name:
+                lo = float(world.model.actuator_ctrlrange[i, 0])
+                hi = float(world.model.actuator_ctrlrange[i, 1])
+                ctrl_ranges[name] = (lo, hi)
 
     robots = []
     for r in manifest.robots:
         actuators = [
-            _build_actuator_descriptor(a) for a in r.actuators
+            _build_actuator_descriptor(a, ctrl_ranges.get(a.mjcf_actuator))
+            for a in r.actuators
         ]
         sensors = [
             _build_sensor_descriptor(s) for s in r.sensors

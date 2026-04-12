@@ -49,6 +49,35 @@ pub async fn spawn_state_task(
     // field stays empty — triggering the "connect a robot" empty state.
     engine.register_queue(&inference_qid, QueueDataType::QdtSt3215Inference, vec![]);
 
+    // Build per-actuator step ranges from the MJCF ctrlrange reported
+    // in the WorldDescriptor.  This replaces the preset's fixed
+    // min/max_angle_steps (0/4095) with values that match the actual
+    // usable joint range — so the web UI slider maps 0–100% to the
+    // real physical range of each actuator.
+    let ctrl_step_ranges: std::collections::HashMap<String, (u32, u32)> = {
+        let desc = sim_runtime.world_descriptor();
+        let mut map = std::collections::HashMap::new();
+        for robot in &desc.robots {
+            for act_desc in &robot.actuators {
+                if act_desc.ctrl_range_min != 0.0 || act_desc.ctrl_range_max != 0.0 {
+                    if let Some(motor_id) = actuator_map.get_motor_id_by_actuator(&act_desc.actuator_id) {
+                        if let Some(entry) = actuator_map.get_by_motor_id(motor_id) {
+                            let lo = st3215_wire::units::rad_to_steps(
+                                act_desc.ctrl_range_min as f32, entry.offset_steps
+                            ) as u32;
+                            let hi = st3215_wire::units::rad_to_steps(
+                                act_desc.ctrl_range_max as f32, entry.offset_steps
+                            ) as u32;
+                            map.insert(act_desc.actuator_id.clone(), (lo, hi));
+                        }
+                    }
+                }
+            }
+        }
+        map
+    };
+    let ctrl_step_ranges = Arc::new(ctrl_step_ranges);
+
     let mut snapshot_rx = sim_runtime.subscribe_snapshots();
     let handle = tokio::spawn(async move {
         loop {
@@ -59,6 +88,7 @@ pub async fn spawn_state_task(
                         &actuator_map,
                         &robot_id,
                         &legacy_bus_serial,
+                        &ctrl_step_ranges,
                     ) {
                         Ok(bytes) => bytes,
                         Err(e) => {
@@ -103,6 +133,7 @@ pub(crate) fn build_inference_bytes(
     actuator_map: &ActuatorMap,
     robot_id: &str,
     legacy_bus_serial: &str,
+    ctrl_step_ranges: &std::collections::HashMap<String, (u32, u32)>,
 ) -> Result<Bytes, BridgeError> {
     let mut motors: Vec<MotorState> = Vec::with_capacity(actuator_map.len());
 
@@ -147,8 +178,14 @@ pub(crate) fn build_inference_bytes(
             app_start_id: 0,
             state: bytes,
             error: None,
-            range_min: entry.min_angle_steps as u32,
-            range_max: entry.max_angle_steps as u32,
+            range_min: ctrl_step_ranges
+                .get(&ref_.actuator_id)
+                .map(|(lo, _)| *lo)
+                .unwrap_or(entry.min_angle_steps as u32),
+            range_max: ctrl_step_ranges
+                .get(&ref_.actuator_id)
+                .map(|(_, hi)| *hi)
+                .unwrap_or(entry.max_angle_steps as u32),
             range_freezed: true,
             last_command: None,
         });
@@ -254,7 +291,7 @@ mod tests {
     fn test_build_inference_bytes_shape() {
         let map = two_motor_map();
         let snap = snapshot_with(0.5, 1.0);
-        let bytes = build_inference_bytes(&snap, &map, "elrobot_follower", "sim://bus0").unwrap();
+        let bytes = build_inference_bytes(&snap, &map, "elrobot_follower", "sim://bus0", &std::collections::HashMap::new()).unwrap();
 
         let inference = InferenceState::decode(bytes.as_ref()).unwrap();
         assert_eq!(inference.buses.len(), 1);
@@ -279,7 +316,7 @@ mod tests {
     fn test_build_inference_bytes_roundtrip_position() {
         let map = two_motor_map();
         let snap = snapshot_with(0.5, 1.0);
-        let bytes = build_inference_bytes(&snap, &map, "elrobot_follower", "sim://bus0").unwrap();
+        let bytes = build_inference_bytes(&snap, &map, "elrobot_follower", "sim://bus0", &std::collections::HashMap::new()).unwrap();
 
         let inference = InferenceState::decode(bytes.as_ref()).unwrap();
         let bus = &inference.buses[0];
@@ -333,7 +370,7 @@ mod tests {
         let map = two_motor_map();
         let mut snap = snapshot_with(0.0, 0.0);
         snap.actuators[0].r#ref.as_mut().unwrap().robot_id = "other_robot".into();
-        let bytes = build_inference_bytes(&snap, &map, "elrobot_follower", "sim://bus0").unwrap();
+        let bytes = build_inference_bytes(&snap, &map, "elrobot_follower", "sim://bus0", &std::collections::HashMap::new()).unwrap();
         let inference = InferenceState::decode(bytes.as_ref()).unwrap();
         // Only motor 8 should survive — rev_motor_01 had robot_id=other_robot.
         assert_eq!(inference.buses[0].motors.len(), 1);

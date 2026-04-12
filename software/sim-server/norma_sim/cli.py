@@ -77,7 +77,7 @@ async def _async_main(args: argparse.Namespace) -> int:
 
     world = MuJoCoWorld(manifest)
     descriptor = build_world_descriptor(
-        manifest, publish_hz=args.publish_hz, physics_hz=args.physics_hz
+        manifest, world=world, publish_hz=args.publish_hz, physics_hz=args.physics_hz
     )
     applier = ActuationApplier(world)
     builder = SnapshotBuilder(world)
