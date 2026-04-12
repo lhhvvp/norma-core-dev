@@ -1,6 +1,6 @@
 """URDF ↔ MJCF consistency gate.
 
-The `elrobot_follower.urdf` at hardware/elrobot/simulation/ is kept as the
+The `elrobot_follower.urdf` in this package directory is kept as the
 kinematic source of truth. This test prevents it from rotting: whenever
 the MJCF's joint topology diverges from the URDF's, the test fails loudly.
 

@@ -44,9 +44,9 @@ Versioning is semver, independent of the `software/` crates.
 
 ### Integration context
 
-- NormaCore main HEAD before this version: `aa65fd3` (or whatever the
-  spec landing commit was)
-- MVP-3 Engine Package Completion Chunk 1 commit: (this commit)
+- NormaCore main HEAD before this version: `08475e8` on main (2026-04-12,
+  plan-review-fixes commit immediately preceding Chunk 1)
+- MVP-3 Engine Package Completion Chunk 1 commit: `51ecccd` on main (2026-04-12)
 - Roadmap spec: `docs/superpowers/specs/2026-04-12-mvp3-foundation-roadmap-design.md`
 
 ## [0.1.0] — 2026-04-12
