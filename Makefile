@@ -121,3 +121,33 @@ viewer-so100:
 viewer-so101:
 	mjviser hardware/elrobot/simulation/vendor/therobotstudio/SO101/scene.xml \
 	  --port $(MJVISER_PORT)
+
+# —— Combined: station web + mjviser side by side ————————————————————
+# Launches both in one command. Ctrl+C kills both.
+#   http://localhost:8889  → station web (control)
+#   http://localhost:8012  → mjviser (3D debug)
+
+.PHONY: sim-debug-so101
+sim-debug-so101:
+	@echo "Starting station web (:8889) + mjviser (:8012)..."
+	@echo "  http://localhost:8889  ← station (control)"
+	@echo "  http://localhost:8012  ← mjviser (3D debug)"
+	@PYTHONPATH=$(SIM_PYTHONPATH) ./target/debug/station \
+	  -c software/station/bin/station/station-sim-therobotstudio.yaml \
+	  --web 0.0.0.0:8889 \
+	  --tcp 0.0.0.0:8888 & \
+	mjviser hardware/elrobot/simulation/vendor/therobotstudio/SO101/scene.xml \
+	  --port $(MJVISER_PORT); \
+	kill %1 2>/dev/null; wait
+
+.PHONY: sim-debug-elrobot
+sim-debug-elrobot:
+	@echo "Starting station web (:8889) + mjviser (:8012)..."
+	@echo "  http://localhost:8889  ← station (control)"
+	@echo "  http://localhost:8012  ← mjviser (3D debug)"
+	@PYTHONPATH=$(SIM_PYTHONPATH) ./target/debug/station \
+	  -c software/station/bin/station/station-sim.yaml \
+	  --web 0.0.0.0:8889 & \
+	mjviser hardware/elrobot/simulation/mujoco/elrobot_follower/scene.xml \
+	  --port $(MJVISER_PORT); \
+	kill %1 2>/dev/null; wait
