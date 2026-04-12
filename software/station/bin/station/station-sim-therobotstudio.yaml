@@ -20,6 +20,9 @@ sim-runtime:
     - "100"
     - --render-port
     - "8012"
+    - --cameras
+    - top
+    - wrist.top
 
 bridges:
   st3215_compat:

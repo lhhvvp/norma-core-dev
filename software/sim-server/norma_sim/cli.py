@@ -124,10 +124,25 @@ async def _async_main(args: argparse.Namespace) -> int:
                     extra={"extra_fields": {"port": args.render_port}},
                 )
 
+                _gui_cam_handles: dict[str, object] = {}
+
                 def on_render() -> None:
                     mjv_scene.update_from_mjdata(world.data)
+                    # Update camera feed panels in GUI sidebar
+                    if stepping and stepping._cameras and viser_server:
+                        frames = stepping.render_cameras()
+                        for cam_name, pixels in frames.items():
+                            if cam_name not in _gui_cam_handles:
+                                _gui_cam_handles[cam_name] = viser_server.gui.add_image(
+                                    pixels, label=f"cam: {cam_name}",
+                                    format="jpeg", jpeg_quality=80,
+                                )
+                            else:
+                                _gui_cam_handles[cam_name].image = pixels
 
             except ImportError:
+                viser_server = None
+                _gui_cam_handles = {}
                 log.warning("mjviser not installed; --render-port ignored")
 
         # Camera config
@@ -204,10 +219,26 @@ async def _async_main(args: argparse.Namespace) -> int:
                 import viser
                 from mjviser import ViserMujocoScene
 
+                _rt_viser_server = [None]
+                _rt_gui_handles: dict[str, object] = {}
+                _rt_renderers: dict[str, object] = {}
+
                 def _init_mjviser():
+                    import mujoco as _mj
                     vs = viser.ViserServer(port=args.render_port)
                     scene = ViserMujocoScene(vs, world.model, num_envs=1)
                     mjv_scene_holder[0] = scene
+                    _rt_viser_server[0] = vs
+                    # Init camera renderers for GUI feed
+                    if args.cameras:
+                        from .scheduler.stepping import DEFAULT_CAMERAS
+                        for name in args.cameras:
+                            if name in DEFAULT_CAMERAS:
+                                cfg = DEFAULT_CAMERAS[name]
+                                _rt_renderers[name] = {
+                                    "renderer": _mj.Renderer(world.model, height=cfg.height, width=cfg.width),
+                                    "cfg": cfg,
+                                }
                     log.info(
                         "mjviser started (realtime)",
                         extra={"extra_fields": {"port": args.render_port}},
@@ -231,6 +262,32 @@ async def _async_main(args: argparse.Namespace) -> int:
             # Push to mjviser (same thread as physics, no lock needed)
             if mjv_scene_holder[0] is not None:
                 mjv_scene_holder[0].update_from_mjdata(world.data)
+                # Render camera feeds to GUI sidebar
+                vs = _rt_viser_server[0]
+                if vs is not None and _rt_renderers:
+                    import mujoco as _mj
+                    for cam_name, r in _rt_renderers.items():
+                        mjcf_cam_id = _mj.mj_name2id(
+                            world.model, _mj.mjtObj.mjOBJ_CAMERA, cam_name
+                        )
+                        if mjcf_cam_id >= 0:
+                            r["renderer"].update_scene(world.data, camera=cam_name)
+                        else:
+                            cam = _mj.MjvCamera()
+                            cam.type = _mj.mjtCamera.mjCAMERA_FREE
+                            cam.lookat[:] = r["cfg"].lookat
+                            cam.distance = r["cfg"].distance
+                            cam.azimuth = r["cfg"].azimuth
+                            cam.elevation = r["cfg"].elevation
+                            r["renderer"].update_scene(world.data, camera=cam)
+                        pixels = r["renderer"].render()
+                        if cam_name not in _rt_gui_handles:
+                            _rt_gui_handles[cam_name] = vs.gui.add_image(
+                                pixels, label=f"cam: {cam_name}",
+                                format="jpeg", jpeg_quality=80,
+                            )
+                        else:
+                            _rt_gui_handles[cam_name].image = pixels
 
         scheduler = RealTimeScheduler(
             world,
