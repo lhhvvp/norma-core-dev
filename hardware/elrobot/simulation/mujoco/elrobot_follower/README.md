@@ -24,10 +24,14 @@ elrobot_follower/
 ├── LICENSE                  ← Apache-2.0
 ├── README.md                ← this file
 ├── CHANGELOG.md             ← physics-relevant changes
+├── CITATION.cff                ← CFF 1.2.0 citation metadata (upstream prereq)
+├── elrobot_follower.png        ← render thumbnail (Menagerie convention)
 ├── assets/                  ← STL meshes referenced by elrobot_follower.xml (meshdir="assets")
 ├── measurements/            ← parameter provenance + future sysID data
 │   ├── README.md            ← folder purpose + workflow
 │   └── menagerie_diff.md    ← Menagerie→ElRobot parameter adaptation record
+├── tools/                   ← development utilities
+│   └── render_thumbnail.py  ← headless PNG render (mujoco.Renderer + Pillow)
 └── tests/                   ← engine-level validation
     ├── conftest.py              ← shared fixtures (elrobot_mjcf_path, elrobot_sim)
     ├── test_elrobot_acceptance.py ← physics acceptance (Floors 1-6, pure mujoco)

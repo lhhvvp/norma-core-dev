@@ -64,7 +64,7 @@ physics_baseline:
   sysid_complete: false
 
 version:
-  current: "0.2.2"
+  current: "0.2.3"
   changelog: CHANGELOG.md
   version_file: VERSION
 
@@ -74,7 +74,7 @@ upstream:
   prerequisites:
     - LICENSE file present (done at 0.1.0)
     - sysid_complete == true
-    - Full CITATION.cff metadata
+    - Full CITATION.cff metadata (done at 0.2.3)
     - scene.xml wrapper with lights/floor (Menagerie convention; done at 0.2.1)
     - Passing tests executable in isolation (done at 0.2.2)
   engaged: false

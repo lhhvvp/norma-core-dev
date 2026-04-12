@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this robot model, please cite it as below."
+type: software
+title: "ElRobot Follower Arm — MuJoCo Physics Model"
+version: 0.2.3
+license: Apache-2.0
+date-released: "2026-04-12"
+authors:
+  - given-names: Yuan

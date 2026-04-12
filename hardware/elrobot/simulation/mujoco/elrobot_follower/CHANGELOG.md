@@ -3,6 +3,41 @@
 Follows a subset of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is semver, independent of the `software/` crates.
 
+## [0.2.3] — 2026-04-12
+
+### Added
+
+- `CITATION.cff` — CFF 1.2.0 repository-only citation metadata. Upstream
+  prerequisite 3/5 now satisfied. No `preferred-citation` block yet (no
+  associated paper); add one when a paper is published.
+- `elrobot_follower.png` — 640x480 render thumbnail matching Menagerie's
+  visual convention (elevated front-left view, home pose, floor visible).
+  Generated headlessly via `tools/render_thumbnail.py`.
+- `tools/render_thumbnail.py` — deterministic headless render script using
+  `mujoco.Renderer` + Pillow. Regenerates the thumbnail after physics or
+  geometry changes: `python3 tools/render_thumbnail.py` from package root.
+- `docs/upstream-to-menagerie.md` (in NormaCore docs, not this package) —
+  contribution guide with prerequisite checklist, file mapping table, and
+  step-by-step submission procedure for mujoco_menagerie.
+
+### Changed
+
+- `robot.yaml`: `version.current` 0.2.2 -> 0.2.3; mark `Full CITATION.cff
+  metadata` prerequisite as done. Upstream prerequisites now **4/5 done**
+  (only `sysid_complete == true` remains).
+- `README.md`: updated file tree to include `CITATION.cff`,
+  `elrobot_follower.png`, and `tools/` directory.
+
+### Physics gate results (at this version)
+
+- No physics changes; all gates identical to v0.2.2.
+- Engine-tier package tests: 20 passed + 1 skipped (mjx if absent).
+
+### Integration context
+
+- MVP-4 A4 commit: (this commit)
+- Spec: `docs/superpowers/specs/2026-04-12-mvp4-a4-upstream-prep-design.md`
+
 ## [0.2.2] — 2026-04-12
 
 ### Added
