@@ -1,0 +1,42 @@
+## TheRobotStudio SO-101 — real STS3215 motor parameters, internal sim.
+#
+# Same architecture as station-sim-menagerie.yaml but uses the
+# TheRobotStudio vendor (kp=17.8, armature=0.028) instead of
+# Menagerie (kp=50, armature=0.1). Should feel noticeably different:
+# lower stiffness, more realistic servo response.
+
+sim-runtime:
+  enabled: true
+  mode: internal
+  launcher:
+    - python3
+    - -m
+    - norma_sim
+    - --manifest
+    - hardware/elrobot/simulation/manifests/norma/therobotstudio_so101.scene.yaml
+    - --physics-hz
+    - "500"
+    - --publish-hz
+    - "100"
+
+bridges:
+  st3215_compat:
+    enabled: true
+    robot-id: default_robot
+    preset-path: software/sim-bridges/st3215-compat-bridge/presets/therobotstudio-so101.yaml
+    legacy-bus-serial: "sim://therobotstudio-so101"
+
+drivers:
+  st3215:
+    enabled: false
+  system-info: true
+  usb-video:
+    enabled: false
+
+inference:
+  - queue-id: inference/normvla
+    shm: /dev/shm/normvla
+    shm-size-mb: 12
+    format: normvla
+    st3215-bus: "sim://therobotstudio-so101"
+    update-interval: 100ms

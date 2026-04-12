@@ -1,0 +1,54 @@
+# TheRobotStudio SO-101 — ST3215 compat bridge preset.
+# Maps SO101 actuator names to virtual ST3215 motor IDs for the web UI.
+
+robot_id: default_robot
+legacy_bus_serial: "sim://therobotstudio-so101"
+
+motors:
+  - actuator_id: shoulder_pan
+    motor_id: 1
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: shoulder_lift
+    motor_id: 2
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: elbow_flex
+    motor_id: 3
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: wrist_flex
+    motor_id: 4
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: wrist_roll
+    motor_id: 5
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0
+
+  - actuator_id: gripper
+    motor_id: 6
+    min_angle_steps: 0
+    max_angle_steps: 4095
+    offset_steps: 2048
+    torque_limit: 500
+    voltage_nominal_v: 12.0

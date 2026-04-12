@@ -1,0 +1,13 @@
+# TheRobotStudio SO-101 — vendored simulation model with real STS3215 parameters.
+#
+# Uses the SO101 MJCF from vendor/therobotstudio/SO101/ (commit fda892c).
+# Motor parameters (kp=17.8, armature=0.028) are STS3215 measured values,
+# significantly more accurate than the Menagerie experience-based values.
+#
+# Gripper limitation: single revolute joint, cannot physically close (same
+# as Menagerie). See vendor/therobotstudio/VENDOR.md for details.
+
+world_name: therobotstudio_so101
+mjcf_path: ../../vendor/therobotstudio/SO101/scene.xml
+# No actuator_annotations — auto-synthesize all <position> actuators as
+# REVOLUTE_POSITION (same approach as menagerie_so_arm100.scene.yaml).
