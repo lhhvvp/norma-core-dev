@@ -130,15 +130,12 @@ viewer-so101:
 .PHONY: sim-debug-so101
 sim-debug-so101:
 	@echo "Starting station web (:8889) + mjviser (:8012)..."
-	@echo "  http://localhost:8889  ← station (control)"
-	@echo "  http://localhost:8012  ← mjviser (3D debug)"
+	@echo "  http://localhost:8889  ← station (control + motor state)"
+	@echo "  http://localhost:8012  ← mjviser (3D, synced with sim)"
 	@PYTHONPATH=$(SIM_PYTHONPATH) ./target/debug/station \
 	  -c software/station/bin/station/station-sim-therobotstudio.yaml \
 	  --web 0.0.0.0:8889 \
-	  --tcp 0.0.0.0:8888 & \
-	mjviser hardware/elrobot/simulation/vendor/therobotstudio/SO101/scene.xml \
-	  --port $(MJVISER_PORT); \
-	kill %1 2>/dev/null; wait
+	  --tcp 0.0.0.0:8888
 
 .PHONY: sim-debug-elrobot
 sim-debug-elrobot:

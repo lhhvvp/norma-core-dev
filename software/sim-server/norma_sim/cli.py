@@ -194,6 +194,21 @@ async def _async_main(args: argparse.Namespace) -> int:
 
     # ── Realtime mode: background physics thread ──
     if args.mode == "realtime":
+        # Optional mjviser for realtime mode
+        mjv_scene_rt = None
+        if args.render_port > 0:
+            try:
+                import viser
+                from mjviser import ViserMujocoScene
+                viser_server = viser.ViserServer(port=args.render_port)
+                mjv_scene_rt = ViserMujocoScene(viser_server, world.model, num_envs=1)
+                log.info(
+                    "mjviser started (realtime)",
+                    extra={"extra_fields": {"port": args.render_port}},
+                )
+            except ImportError:
+                log.warning("mjviser not installed; --render-port ignored")
+
         def publish_cb(tick: int) -> None:
             clock = WorldClock(
                 world_tick=tick,
@@ -205,6 +220,9 @@ async def _async_main(args: argparse.Namespace) -> int:
                 loop.call_soon_threadsafe(server.broadcast_snapshot, snap)
             except RuntimeError:
                 pass
+            # Push to mjviser (same thread as physics, no lock needed)
+            if mjv_scene_rt is not None:
+                mjv_scene_rt.update_from_mjdata(world.data)
 
         scheduler = RealTimeScheduler(
             world,

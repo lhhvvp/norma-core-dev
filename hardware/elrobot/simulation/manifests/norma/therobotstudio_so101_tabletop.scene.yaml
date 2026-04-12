@@ -1,0 +1,7 @@
+# TheRobotStudio SO-101 tabletop scene — with table, cube target, and cameras.
+#
+# For policy evaluation: scene includes a graspable red cube and two
+# fixed cameras (top + wrist_top) matching typical LeRobot SO-101 setups.
+
+world_name: therobotstudio_so101_tabletop
+mjcf_path: ../../vendor/therobotstudio/SO101/scene_tabletop.xml

@@ -178,13 +178,19 @@ class SteppingScheduler:
             renderer = self._renderers.get(cam_name)
             if renderer is None:
                 continue
-            # Set up free camera
-            cam = mujoco.MjvCamera()
-            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-            cam.lookat[:] = cfg.lookat
-            cam.distance = cfg.distance
-            cam.azimuth = cfg.azimuth
-            cam.elevation = cfg.elevation
-            renderer.update_scene(self.world.data, camera=cam)
+            # Prefer MJCF-defined camera by name; fall back to free camera
+            mjcf_cam_id = mujoco.mj_name2id(
+                self.world.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name
+            )
+            if mjcf_cam_id >= 0:
+                renderer.update_scene(self.world.data, camera=cam_name)
+            else:
+                cam = mujoco.MjvCamera()
+                cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                cam.lookat[:] = cfg.lookat
+                cam.distance = cfg.distance
+                cam.azimuth = cfg.azimuth
+                cam.elevation = cfg.elevation
+                renderer.update_scene(self.world.data, camera=cam)
             frames[cam_name] = renderer.render().copy()
         return frames

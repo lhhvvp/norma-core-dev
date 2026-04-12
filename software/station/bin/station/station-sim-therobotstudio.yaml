@@ -18,6 +18,8 @@ sim-runtime:
     - "500"
     - --publish-hz
     - "100"
+    - --render-port
+    - "8012"
 
 bridges:
   st3215_compat:
