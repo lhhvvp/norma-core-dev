@@ -20,6 +20,7 @@ from .ipc.codec import WorldClock
 from .ipc.server import IpcServer
 from .logging_setup import configure_logging
 from .scheduler.realtime import RealTimeScheduler
+from .scheduler.stepping import SteppingScheduler
 from .world.actuation import ActuationApplier
 from .world.descriptor import build_world_descriptor
 from .world.manifest import load_manifest
@@ -47,6 +48,20 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     ap.add_argument("--physics-hz", type=int, default=500)
     ap.add_argument("--publish-hz", type=int, default=100)
+    ap.add_argument(
+        "--mode",
+        choices=["realtime", "stepping"],
+        default="realtime",
+        help="Scheduler mode: 'realtime' (wall-clock paced, default) or "
+             "'stepping' (step-on-demand for Gymnasium integration)",
+    )
+    ap.add_argument(
+        "--render-port",
+        type=int,
+        default=0,
+        help="If set, start mjviser web viewer on this port (e.g. 8012). "
+             "Only effective in stepping mode.",
+    )
     ap.add_argument("--log-level", default="INFO")
     return ap.parse_args(argv)
 
@@ -87,12 +102,46 @@ async def _async_main(args: argparse.Namespace) -> int:
     def on_actuation(batch) -> None:
         applier.drain_and_apply(batch)
 
-    server = IpcServer(
-        socket_path=socket_path,
-        manifest=manifest,
-        descriptor=descriptor,
-        on_actuation=on_actuation,
-    )
+    # ── Stepping mode: IPC-driven, no background thread ──
+    if args.mode == "stepping":
+        # Optional mjviser web viewer
+        on_render = None
+        if args.render_port > 0:
+            try:
+                import viser
+                from mjviser import ViserMujocoScene
+                viser_server = viser.ViserServer(port=args.render_port)
+                mjv_scene = ViserMujocoScene(viser_server, world.model, num_envs=1)
+                log.info(
+                    "mjviser started",
+                    extra={"extra_fields": {"port": args.render_port}},
+                )
+
+                def on_render() -> None:
+                    mjv_scene.update_from_mjdata(world.data)
+
+            except ImportError:
+                log.warning("mjviser not installed; --render-port ignored")
+
+        stepping = SteppingScheduler(
+            world, applier=applier, builder=builder,
+            physics_hz=args.physics_hz, on_render=on_render,
+        )
+        server = IpcServer(
+            socket_path=socket_path,
+            manifest=manifest,
+            descriptor=descriptor,
+            on_actuation=on_actuation,
+            on_step=stepping.step,
+            on_reset=stepping.reset,
+        )
+    else:
+        server = IpcServer(
+            socket_path=socket_path,
+            manifest=manifest,
+            descriptor=descriptor,
+            on_actuation=on_actuation,
+        )
 
     # Install the asyncio signal handlers BEFORE binding the UDS so
     # that a SIGTERM arriving between `server.start()` and the
@@ -124,45 +173,50 @@ async def _async_main(args: argparse.Namespace) -> int:
 
     await server.start()
 
-    def publish_cb(tick: int) -> None:
-        clock = WorldClock(
-            world_tick=tick,
-            sim_time_ns=int(tick * (1e9 / args.physics_hz)),
-            wall_time_ns=0,
-        )
-        snap = builder.build(clock=clock)
-        # Hand the snapshot to the asyncio loop.
-        try:
-            loop.call_soon_threadsafe(server.broadcast_snapshot, snap)
-        except RuntimeError:
-            # Loop is stopping; drop silently.
-            pass
-
-    scheduler = RealTimeScheduler(
-        world,
-        physics_hz=args.physics_hz,
-        publish_hz=args.publish_hz,
-        on_publish=publish_cb,
-    )
-
-    def physics_thread() -> None:
-        try:
-            scheduler.run_forever()
-        finally:
-            loop_stopped.set()
+    # ── Realtime mode: background physics thread ──
+    if args.mode == "realtime":
+        def publish_cb(tick: int) -> None:
+            clock = WorldClock(
+                world_tick=tick,
+                sim_time_ns=int(tick * (1e9 / args.physics_hz)),
+                wall_time_ns=0,
+            )
+            snap = builder.build(clock=clock)
             try:
-                loop.call_soon_threadsafe(_request_stop_event.set)
+                loop.call_soon_threadsafe(server.broadcast_snapshot, snap)
             except RuntimeError:
                 pass
 
-    t = threading.Thread(target=physics_thread, name="sim-physics", daemon=True)
-    t.start()
+        scheduler = RealTimeScheduler(
+            world,
+            physics_hz=args.physics_hz,
+            publish_hz=args.publish_hz,
+            on_publish=publish_cb,
+        )
+
+        def physics_thread() -> None:
+            try:
+                scheduler.run_forever()
+            finally:
+                loop_stopped.set()
+                try:
+                    loop.call_soon_threadsafe(_request_stop_event.set)
+                except RuntimeError:
+                    pass
+
+        t = threading.Thread(target=physics_thread, name="sim-physics", daemon=True)
+        t.start()
+    else:
+        scheduler = None  # type: ignore[assignment]
+        t = None
+        log.info("stepping mode: physics driven by IPC requests")
 
     try:
         await _request_stop_event.wait()
     finally:
-        scheduler.stop()
-        if t.is_alive():
+        if scheduler is not None:
+            scheduler.stop()
+        if t is not None and t.is_alive():
             t.join(timeout=2.0)
         await server.stop()
 

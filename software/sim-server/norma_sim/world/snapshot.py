@@ -20,19 +20,27 @@ class SnapshotBuilder:
 
     def __init__(self, world: "MuJoCoWorld") -> None:
         self.world = world
-        self._rows: list[tuple[str, str, int, int, object]] = []
+        # Each row: (robot_id, actuator_id, ctrl_idx, qpos_addr, dof_addr, manifest)
+        self._rows: list[tuple[str, str, int, int, int, object]] = []
+        import mujoco
         for robot in world.manifest.robots:
             for act in robot.actuators:
                 ctrl_idx = world.actuator_id_for(act.mjcf_actuator)
                 qpos_addr = world.joint_qposadr_for(act.mjcf_joint)
                 if ctrl_idx is None or qpos_addr is None:
                     continue
+                # dof_addr for velocity: look up joint index → jnt_dofadr
+                joint_idx = mujoco.mj_name2id(
+                    world.model, mujoco.mjtObj.mjOBJ_JOINT, act.mjcf_joint
+                )
+                dof_addr = int(world.model.jnt_dofadr[joint_idx]) if joint_idx >= 0 else qpos_addr
                 self._rows.append(
                     (
                         robot.robot_id,
                         act.actuator_id,
                         int(ctrl_idx),
                         int(qpos_addr),
+                        dof_addr,
                         act,
                     )
                 )
@@ -40,13 +48,14 @@ class SnapshotBuilder:
     def build(self, clock: "world_pb.WorldClock | None") -> "world_pb.WorldSnapshot":
         actuators = []
         data = self.world.data
-        for robot_id, act_id, ctrl_idx, qpos_addr, act in self._rows:
+        for robot_id, act_id, ctrl_idx, qpos_addr, dof_addr, act in self._rows:
             qpos = float(data.qpos[qpos_addr])
             position_value = capabilities.qpos_to_position_value(qpos, act)
-            # velocity index: jnt_dofadr for this joint gives qvel index
+            velocity_value = float(data.qvel[dof_addr])
             goal_value = capabilities.qpos_to_position_value(
                 float(data.ctrl[ctrl_idx]), act
             )
+            is_moving = abs(velocity_value) > 1e-4
             actuators.append(
                 world_pb.ActuatorState(
                     ref=world_pb.ActuatorRef(
@@ -54,10 +63,10 @@ class SnapshotBuilder:
                         actuator_id=act_id,
                     ),
                     position_value=position_value,
-                    velocity_value=0.0,  # MVP-1: joint-velocity readout deferred
-                    effort_value=0.0,    # MVP-1: no sensor
+                    velocity_value=velocity_value,
+                    effort_value=0.0,  # actuator_force readout deferred
                     torque_enabled=True,
-                    moving=False,
+                    moving=is_moving,
                     goal_position_value=goal_value,
                 )
             )

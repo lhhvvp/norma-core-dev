@@ -41,6 +41,9 @@ ActuatorState = world_pb.ActuatorState
 ActuatorRef = world_pb.ActuatorRef
 SetPosition = world_pb.SetPosition
 QosLane = world_pb.QosLane
+StepRequest = world_pb.StepRequest
+StepResponse = world_pb.StepResponse
+ResetRequest = world_pb.ResetRequest
 
 
 def encode_envelope(env: "Envelope") -> bytes:
@@ -62,6 +65,15 @@ def decode_envelope(data: bytes) -> "Envelope":
         else None,
         goodbye=_goodbye_from(reader) if reader._goodbye_buf is not None else None,
         error=_error_from(reader) if reader._error_buf is not None else None,
+        step_request=_step_request_from(reader)
+        if reader._step_request_buf is not None
+        else None,
+        step_response=_step_response_from(reader)
+        if reader._step_response_buf is not None
+        else None,
+        reset_request=_reset_request_from(reader)
+        if reader._reset_request_buf is not None
+        else None,
     )
 
 
@@ -117,6 +129,8 @@ def _robot_descriptor_from_reader(rd_reader) -> "world_pb.RobotDescriptor":
                 actuator_id=a.get_actuator_id(),
                 display_name=a.get_display_name(),
                 capability=cap,
+                ctrl_range_min=a.get_ctrl_range_min(),
+                ctrl_range_max=a.get_ctrl_range_max(),
             )
         )
     sensors = []
@@ -179,7 +193,39 @@ def _actuation_from(env_reader) -> "ActuationBatch":
 
 
 def _snapshot_from(env_reader) -> "WorldSnapshot":
-    r = env_reader.get_snapshot()
+    return _snapshot_from_reader(env_reader.get_snapshot())
+
+
+def _goodbye_from(env_reader) -> "Goodbye":
+    r = env_reader.get_goodbye()
+    return Goodbye(reason=r.get_reason())
+
+
+def _error_from(env_reader) -> "Error":
+    r = env_reader.get_error()
+    return Error(code=r.get_code(), message=r.get_message())
+
+
+def _step_request_from(env_reader) -> "StepRequest":
+    r = env_reader.get_step_request()
+    return StepRequest(n_ticks=r.get_n_ticks())
+
+
+def _step_response_from(env_reader) -> "StepResponse":
+    r = env_reader.get_step_response()
+    snap = None
+    if r._snapshot_buf is not None:
+        snap = _snapshot_from_reader(r.get_snapshot())
+    return StepResponse(snapshot=snap)
+
+
+def _reset_request_from(env_reader) -> "ResetRequest":
+    r = env_reader.get_reset_request()
+    return ResetRequest(seed=r.get_seed())
+
+
+def _snapshot_from_reader(r) -> "WorldSnapshot":
+    """Decode a WorldSnapshot from a reader (shared by Envelope.snapshot and StepResponse)."""
     clock = None
     if r._clock_buf is not None:
         clock = _world_clock_from(r.get_clock())
@@ -204,13 +250,3 @@ def _snapshot_from(env_reader) -> "WorldSnapshot":
             )
         )
     return WorldSnapshot(clock=clock, actuators=actuators, sensors=[])
-
-
-def _goodbye_from(env_reader) -> "Goodbye":
-    r = env_reader.get_goodbye()
-    return Goodbye(reason=r.get_reason())
-
-
-def _error_from(env_reader) -> "Error":
-    r = env_reader.get_error()
-    return Error(code=r.get_code(), message=r.get_message())

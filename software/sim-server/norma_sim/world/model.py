@@ -77,3 +77,8 @@ class MuJoCoWorld:
 
     def step(self) -> None:
         mujoco.mj_step(self.model, self.data)
+
+    def reset(self) -> None:
+        """Reset simulation state: qpos/qvel/ctrl/act to defaults, then forward."""
+        mujoco.mj_resetData(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)

@@ -196,6 +196,22 @@ message BackendTermination {
   bytes stderr_tail = 4;
 }
 
+// —— Step-on-demand (Gymnasium integration) ——
+
+message StepRequest {
+  uint32 n_ticks = 1;  // advance physics by exactly n ticks
+}
+
+message StepResponse {
+  WorldSnapshot snapshot = 1;  // state after stepping
+}
+
+message ResetRequest {
+  // seed for future deterministic domain randomization; 0 = default state.
+  // Also ensures non-zero wire size (gremlin_py skips empty submessages in oneof).
+  uint32 seed = 1;
+}
+
 // —— Envelope ——
 
 message Envelope {
@@ -206,6 +222,9 @@ message Envelope {
     WorldSnapshot  snapshot       = 4;
     Goodbye        goodbye        = 5;
     Error          error          = 6;
+    StepRequest    step_request   = 7;
+    StepResponse   step_response  = 8;
+    ResetRequest   reset_request  = 9;
   }
 }
 

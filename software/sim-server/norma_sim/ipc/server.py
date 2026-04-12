@@ -14,7 +14,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 from ..world.manifest import WorldManifest
 from .codec import ActuationBatch, WorldDescriptor, WorldSnapshot
@@ -30,11 +30,15 @@ class IpcServer:
         manifest: WorldManifest,
         descriptor: "WorldDescriptor",
         on_actuation: Callable[["ActuationBatch"], None],
+        on_step: Optional[Callable[[int], "WorldSnapshot"]] = None,
+        on_reset: Optional[Callable[[], "WorldSnapshot"]] = None,
     ) -> None:
         self.socket_path = Path(socket_path)
         self.manifest = manifest
         self.descriptor = descriptor
         self.on_actuation = on_actuation
+        self.on_step = on_step
+        self.on_reset = on_reset
         self._sessions: List[ClientSession] = []
         self._sessions_lock = asyncio.Lock()
         self._server: asyncio.base_events.Server | None = None
@@ -73,6 +77,8 @@ class IpcServer:
             on_actuation=self.on_actuation,
             snapshot_queue=snapshot_queue,
             session_id=session_id,
+            on_step=self.on_step,
+            on_reset=self.on_reset,
         )
         async with self._sessions_lock:
             self._sessions.append(session)

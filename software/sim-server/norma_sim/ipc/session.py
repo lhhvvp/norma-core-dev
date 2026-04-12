@@ -21,6 +21,7 @@ from .codec import (
     Envelope,
     Error,
     Error_Code,
+    StepResponse,
     Welcome,
     WorldDescriptor,
     WorldSnapshot,
@@ -44,6 +45,8 @@ class ClientSession:
         on_actuation: Callable[["ActuationBatch"], None],
         snapshot_queue: "asyncio.Queue[Optional[WorldSnapshot]]",
         session_id: str,
+        on_step: Optional[Callable[[int], "WorldSnapshot"]] = None,
+        on_reset: Optional[Callable[[], "WorldSnapshot"]] = None,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -52,6 +55,8 @@ class ClientSession:
         self.on_actuation = on_actuation
         self.snapshot_queue = snapshot_queue
         self.session_id = session_id
+        self.on_step = on_step
+        self.on_reset = on_reset
         self._closed = False
 
     async def run(self) -> None:
@@ -164,6 +169,10 @@ class ClientSession:
                         "on_actuation callback raised in session %s",
                         self.session_id,
                     )
+            elif env.step_request is not None:
+                await self._handle_step_request(env.step_request)
+            elif env.reset_request is not None:
+                await self._handle_reset_request(env.reset_request)
             elif env.goodbye is not None:
                 _log.info(
                     "session %s received Goodbye: %s",
@@ -189,6 +198,34 @@ class ClientSession:
             await write_frame(self.writer, encode_envelope(env))
         except (ConnectionResetError, BrokenPipeError):
             pass
+
+    async def _handle_step_request(self, req) -> None:
+        if self.on_step is None:
+            _log.warning(
+                "session %s received StepRequest but scheduler is not stepping-mode",
+                self.session_id,
+            )
+            return
+        try:
+            n = req.n_ticks if req.n_ticks > 0 else 1
+            snapshot = self.on_step(n)
+            await self._send(Envelope(step_response=StepResponse(snapshot=snapshot)))
+        except Exception:
+            _log.exception("on_step raised in session %s", self.session_id)
+
+    async def _handle_reset_request(self, req) -> None:
+        if self.on_reset is None:
+            _log.warning(
+                "session %s received ResetRequest but scheduler is not stepping-mode",
+                self.session_id,
+            )
+            return
+        try:
+            seed = req.seed if req.seed > 0 else None
+            snapshot = self.on_reset(seed)
+            await self._send(Envelope(step_response=StepResponse(snapshot=snapshot)))
+        except Exception:
+            _log.exception("on_reset raised in session %s", self.session_id)
 
     async def _close(self) -> None:
         if self._closed:
