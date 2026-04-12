@@ -442,11 +442,27 @@ def test_elrobot_manifest_pipeline_sentinel(elrobot_scene_yaml):
     """Smoke: scene.yaml → load_manifest → MuJoCoWorld pipeline still works
     end-to-end for the elrobot package. Catches manifest-layer regressions
     that the engine-tier acceptance suite (now in mujoco/elrobot_follower/tests/)
-    cannot see."""
+    cannot see — specifically: scene.yaml parsing, world_name binding,
+    actuator_annotations consistency check, and the GRIPPER_PARALLEL
+    capability assignment for act_motor_08."""
     world = MuJoCoWorld.from_manifest_path(elrobot_scene_yaml)
     mujoco.mj_step(world.model, world.data)
+
+    # Manifest parsing actually happened (not just MJCF load)
+    assert world.manifest.world_name == "elrobot_follower"
+
+    # MJCF compile + lookup cache built correctly
     assert world.model.nu == 8
-    assert world.actuator_id_for("act_motor_08") is not None  # gripper
+
+    # actuator_annotations were applied — without these explicit annotations,
+    # load_manifest auto-synthesizes act_motor_08 as a plain
+    # REVOLUTE_POSITION (manifest.py:187), so this is the assertion that
+    # fails if the gripper annotation is silently dropped from the
+    # scene.yaml or from load_manifest's annotation merge.
+    gripper = world.actuator_by_mjcf_name("act_motor_08")
+    assert gripper is not None
+    assert gripper.capability.kind == "GRIPPER_PARALLEL"
+    assert gripper.gripper is not None  # gripper-specific metadata block
 ```
 
 The 13 physics tests move; the manifest-layer coverage is preserved by the
@@ -779,7 +795,10 @@ A2 → A3 → A1 is the dominant choice. All others incur "patch twice" or
 
 Per `multi_session_workflow` memory, MVP-3 is **not suitable for parallel
 sessions**:
-- 3 chunks form a hard sequential chain (A2 → A3 → A1)
+- The Chunk 1 → Chunk 3 hard dependency forces those two to be sequential;
+  Chunk 2 sits between them only by convention (it is content-soft from
+  both sides). Two of the three chunks are therefore strictly serialized,
+  and parallelizing the third would only save Chunk 2's work in isolation
 - Chunks are small enough that single-session context is sufficient
 - Multi-session coordination overhead > time saved
 - Cross-chunk learning (each chunk's lessons inform the next) is easier in a
@@ -851,15 +870,31 @@ enumerated by recall instead of by exhaustive search.
   include in Phase A a `grep -rn` exhaustive scan whose results are folded
   into the Phase F file list. This is a per-plan pattern, not a system-level
   change.
-- **(α') "baseline-first" mandatory in chunk plans (added per codex iter-1)**:
-  every chunk plan must capture `BASELINE_PASSED` and `BASELINE_SKIPPED` from
-  `make sim-test` in Phase A pre-flight, and write all later test-count
-  assertions as deltas relative to those baselines — never as absolute
-  numbers. The original MVP-3 spec drafts wrote absolute counts (`90 passed,
-  1 skipped` etc.), which would silently break if (a) `mujoco.mjx` got
-  installed in dev env, (b) another commit on main added a test, or (c)
-  spec lines drifted out of sync. Baseline-relative deltas eliminate the
-  whole class of fragility.
+- **(α') "baseline-first" mandatory in chunk plans (added per codex iter-1,
+  scope clarified per codex iter-2)**: every chunk plan must capture
+  `BASELINE_PASSED` and `BASELINE_SKIPPED` from `make sim-test` in Phase A
+  pre-flight, and write all **`make sim-test` total-suite** test-count
+  assertions and **`pytest software/sim-server/tests/`** total-suite
+  test-count assertions as deltas relative to those baselines — never as
+  absolute numbers. **Scope of the rule**: this applies only to *cross-repo
+  totals* whose absolute count depends on dev env (mjx) or other concurrent
+  commits on main. **Package-local absolute counts are allowed**: the
+  engine-tier suite at
+  `pytest hardware/elrobot/simulation/mujoco/elrobot_follower/tests/`
+  and the cp -r /tmp self-containment count are both fully owned by this
+  spec — no external commits add tests there, mjx skip is the only env
+  variable, and the count for "1 mjx skip" is stable. Writing absolute
+  counts like "4 passed + 1 skip(mjx)" for the package-local suite is
+  fine because if mjx becomes installed, the assertion can be expressed as
+  "4 passed + 0 skipped OR 5 passed + 0 skipped" using a stable conditional
+  in the plan.
+
+  The original MVP-3 spec drafts wrote *cross-repo* absolute counts
+  (`90 passed, 1 skipped` etc.), which would silently break if (a)
+  `mujoco.mjx` got installed in dev env, (b) another commit on main added
+  a test, or (c) spec lines drifted out of sync. Baseline-relative deltas
+  for cross-repo totals eliminate that class of fragility while keeping
+  package-local absolute counts (which are not fragile) readable.
 - **(β) modify writing-plans skill template (rejected)**: would require
   editing files outside `norma-core` repo and would affect other projects.
   Out of scope.
@@ -938,8 +973,10 @@ flaky tests pass. Codex iter-1 explicitly recommended this narrowing.
 
 ### Deciding when deferred items unlock
 
-**MVP-3 Engine Package Completion completion** = Chunk 3 atomic commit landed + double review
-passed + memory updated. After that:
+**MVP-3 Engine Package Completion completion** = Chunk 3's two split commits
+(commit 1 = additive new acceptance + sentinel; commit 2 = deletion +
+cleanup) both landed + double review passed for both + memory updated.
+After that:
 
 1. User picks the next milestone (MVP-4 upstream / MVP-4 training / MVP-4
    sysID / other)
