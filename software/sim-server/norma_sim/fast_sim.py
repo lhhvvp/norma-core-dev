@@ -44,40 +44,25 @@ class FastSim:
         self.data = self.world.data
         self.substeps = physics_hz // action_hz
 
-        # ── Actuator mapping (same heuristic as gym_env.py) ──
-        self._joint_indices: list[int] = []   # MuJoCo actuator indices
-        self._gripper_indices: list[int] = []
-        self._joint_manifests: list = []
-        self._gripper_manifests: list = []
-
-        for robot in self.world.manifest.robots:
-            for act in robot.actuators:
-                mj_idx = self.world.actuator_id_for(act.mjcf_actuator)
-                is_gripper = (
-                    act.capability.kind == "GRIPPER_PARALLEL"
-                    or "gripper" in act.actuator_id.lower()
-                )
-                if is_gripper:
-                    self._gripper_indices.append(mj_idx)
-                    self._gripper_manifests.append(act)
-                else:
-                    self._joint_indices.append(mj_idx)
-                    self._joint_manifests.append(act)
+        # ── Actuator mapping (from MuJoCoWorld — single source of truth) ──
+        self._joint_manifests = list(self.world.joint_actuators)
+        self._gripper_manifests = list(self.world.gripper_actuators)
+        self._joint_indices = [self.world.actuator_id_for(a.mjcf_actuator) for a in self._joint_manifests]
+        self._gripper_indices = [self.world.actuator_id_for(a.mjcf_actuator) for a in self._gripper_manifests]
 
         # ── Joint qpos addresses for reading state ──
-        self._joint_qposadr: list[int] = []
-        self._gripper_qposadr: list[int] = []
-        for robot in self.world.manifest.robots:
-            for act in robot.actuators:
-                adr = self.world.joint_qposadr_for(act.mjcf_joint)
-                is_gripper = (
-                    act.capability.kind == "GRIPPER_PARALLEL"
-                    or "gripper" in act.actuator_id.lower()
-                )
-                if is_gripper:
-                    self._gripper_qposadr.append(adr)
-                else:
-                    self._joint_qposadr.append(adr)
+        self._joint_qposadr = [self.world.joint_qposadr_for(a.mjcf_joint) for a in self._joint_manifests]
+        self._gripper_qposadr = [self.world.joint_qposadr_for(a.mjcf_joint) for a in self._gripper_manifests]
+
+        # ── Gripper ctrlrange for [0,1] ↔ ctrl mapping ──
+        # Matches gym_env.py behavior: gripper normalized [0,1] maps to
+        # MJCF ctrlrange [lo, hi]. This is distinct from capabilities.py
+        # which only handles GRIPPER_PARALLEL metadata.
+        self._gripper_ctrlrange = []
+        for mj_idx in self._gripper_indices:
+            lo = float(self.model.actuator_ctrlrange[mj_idx, 0])
+            hi = float(self.model.actuator_ctrlrange[mj_idx, 1])
+            self._gripper_ctrlrange.append((lo, hi))
 
         # ── Camera renderers ──
         self._cameras = cameras or {}
@@ -116,12 +101,11 @@ class FastSim:
                     float(joint_positions[i]), act
                 )
 
-        # Set gripper control
+        # Set gripper control: map [0,1] → ctrlrange (matching gym_env)
         for i, mj_idx in enumerate(self._gripper_indices):
-            act = self._gripper_manifests[i]
-            self.data.ctrl[mj_idx] = command_value_to_ctrl(
-                float(gripper_normalized), act
-            )
+            g = float(np.clip(gripper_normalized, 0.0, 1.0))
+            lo, hi = self._gripper_ctrlrange[i]
+            self.data.ctrl[mj_idx] = g * (hi - lo) + lo
 
         # Physics substeps
         for _ in range(self.substeps):
@@ -140,13 +124,15 @@ class FastSim:
         )
         obs["joints"] = joints
 
-        # Gripper position (normalized 0-1)
+        # Gripper position: map ctrlrange → [0,1] (matching gym_env)
         if self._gripper_qposadr:
-            raw = float(self.data.qpos[self._gripper_qposadr[0]])
-            act = self._gripper_manifests[0]
-            obs["gripper"] = np.array(
-                [qpos_to_position_value(raw, act)], dtype=np.float64
-            )
+            grippers = np.zeros(len(self._gripper_qposadr), dtype=np.float64)
+            for i, adr in enumerate(self._gripper_qposadr):
+                raw = float(self.data.qpos[adr])
+                lo, hi = self._gripper_ctrlrange[i]
+                rng = hi - lo
+                grippers[i] = (raw - lo) / rng if rng > 0 else 0.0
+            obs["gripper"] = grippers
         else:
             obs["gripper"] = np.array([0.0], dtype=np.float64)
 

@@ -57,54 +57,28 @@ class FastSimMJX:
         self.mj_model = self.world.model
         self.mjx_model = mjx.put_model(self.mj_model)
 
-        # ── Actuator mapping (same heuristic as fast_sim.py) ──
-        self._joint_indices: list[int] = []
-        self._gripper_indices: list[int] = []
-
-        for robot in self.world.manifest.robots:
-            for act in robot.actuators:
-                mj_idx = self.world.actuator_id_for(act.mjcf_actuator)
-                is_gripper = (
-                    act.capability.kind == "GRIPPER_PARALLEL"
-                    or "gripper" in act.actuator_id.lower()
-                )
-                if is_gripper:
-                    self._gripper_indices.append(mj_idx)
-                else:
-                    self._joint_indices.append(mj_idx)
+        # ── Actuator mapping (from MuJoCoWorld — single source of truth) ──
+        self._joint_indices = [self.world.actuator_id_for(a.mjcf_actuator) for a in self.world.joint_actuators]
+        self._gripper_indices = [self.world.actuator_id_for(a.mjcf_actuator) for a in self.world.gripper_actuators]
 
         # Pre-compute ctrl mapping as JAX arrays (no Python branching in JIT)
-        # For REVOLUTE_POSITION: ctrl = command (identity)
-        # For GRIPPER_PARALLEL: ctrl = command * scale + offset
         n_actuators = self.mj_model.nu
         scales = np.ones(n_actuators, dtype=np.float32)
         offsets = np.zeros(n_actuators, dtype=np.float32)
-        for robot in self.world.manifest.robots:
-            for act in robot.actuators:
-                idx = self.world.actuator_id_for(act.mjcf_actuator)
-                if act.capability.kind == "GRIPPER_PARALLEL" and act.gripper:
-                    g = act.gripper
-                    norm_lo, norm_hi = g.normalized_range
-                    joint_lo, joint_hi = g.primary_joint_range_rad
-                    scales[idx] = (joint_hi - joint_lo) / (norm_hi - norm_lo)
-                    offsets[idx] = joint_lo - scales[idx] * norm_lo
+        for act in self.world.gripper_actuators:
+            idx = self.world.actuator_id_for(act.mjcf_actuator)
+            if act.capability.kind == "GRIPPER_PARALLEL" and act.gripper:
+                g = act.gripper
+                norm_lo, norm_hi = g.normalized_range
+                joint_lo, joint_hi = g.primary_joint_range_rad
+                scales[idx] = (joint_hi - joint_lo) / (norm_hi - norm_lo)
+                offsets[idx] = joint_lo - scales[idx] * norm_lo
         self._ctrl_scales = jnp.array(scales)
         self._ctrl_offsets = jnp.array(offsets)
 
         # Joint/gripper qpos addresses for reading state
-        self._joint_qposadr = []
-        self._gripper_qposadr = []
-        for robot in self.world.manifest.robots:
-            for act in robot.actuators:
-                adr = self.world.joint_qposadr_for(act.mjcf_joint)
-                is_gripper = (
-                    act.capability.kind == "GRIPPER_PARALLEL"
-                    or "gripper" in act.actuator_id.lower()
-                )
-                if is_gripper:
-                    self._gripper_qposadr.append(adr)
-                else:
-                    self._joint_qposadr.append(adr)
+        self._joint_qposadr = [self.world.joint_qposadr_for(a.mjcf_joint) for a in self.world.joint_actuators]
+        self._gripper_qposadr = [self.world.joint_qposadr_for(a.mjcf_joint) for a in self.world.gripper_actuators]
 
         self._joint_qposadr_jax = jnp.array(self._joint_qposadr)
         self._gripper_qposadr_jax = jnp.array(self._gripper_qposadr)

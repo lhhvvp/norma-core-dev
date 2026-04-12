@@ -10,6 +10,7 @@ a `MuJoCoWorld` by reference.
 from __future__ import annotations
 
 import threading
+from functools import cached_property
 from typing import Optional
 
 import mujoco
@@ -74,6 +75,32 @@ class MuJoCoWorld:
                 if act.mjcf_actuator == mjcf_actuator:
                     return act
         return None
+
+    # ── Actuator classification (single source of truth) ──
+
+    @staticmethod
+    def _is_gripper(act: ActuatorManifest) -> bool:
+        """Classify an actuator as gripper based on capability or name."""
+        return (
+            act.capability.kind == "GRIPPER_PARALLEL"
+            or "gripper" in act.actuator_id.lower()
+        )
+
+    @cached_property
+    def joint_actuators(self) -> tuple[ActuatorManifest, ...]:
+        """All non-gripper actuators across all robots."""
+        return tuple(
+            a for r in self.manifest.robots for a in r.actuators
+            if not self._is_gripper(a)
+        )
+
+    @cached_property
+    def gripper_actuators(self) -> tuple[ActuatorManifest, ...]:
+        """All gripper actuators across all robots."""
+        return tuple(
+            a for r in self.manifest.robots for a in r.actuators
+            if self._is_gripper(a)
+        )
 
     def step(self) -> None:
         mujoco.mj_step(self.model, self.data)
