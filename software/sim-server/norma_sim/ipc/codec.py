@@ -249,4 +249,26 @@ def _snapshot_from_reader(r) -> "WorldSnapshot":
                 goal_position_value=a.get_goal_position_value(),
             )
         )
-    return WorldSnapshot(clock=clock, actuators=actuators, sensors=[])
+    sensors = []
+    for s in r.get_sensors():
+        s_ref = None
+        if s._ref_buf is not None:
+            sr = s.get_ref()
+            s_ref = world_pb.SensorRef(
+                robot_id=sr.get_robot_id(),
+                sensor_id=sr.get_sensor_id(),
+            )
+        cam_frame = None
+        if s._camera_frame_buf is not None:
+            cf = s.get_camera_frame()
+            cam_frame = world_pb.CameraFrame(
+                width=cf.get_width(),
+                height=cf.get_height(),
+                encoding=cf.get_encoding(),
+                data=bytes(cf.get_data()),
+                capture_tick=cf.get_capture_tick(),
+            )
+        sensors.append(
+            world_pb.SensorSample(ref=s_ref, camera_frame=cam_frame)
+        )
+    return WorldSnapshot(clock=clock, actuators=actuators, sensors=sensors)

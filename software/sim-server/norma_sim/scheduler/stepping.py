@@ -9,12 +9,49 @@ This scheduler is selected with ``norma_sim --mode stepping``.
 """
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from typing import Callable, Optional
+
+import numpy as np
 
 from ..ipc.codec import WorldClock
 from ..world.actuation import ActuationApplier
 from ..world.model import MuJoCoWorld
 from ..world.snapshot import SnapshotBuilder
+
+_log = logging.getLogger("norma_sim.scheduler.stepping")
+
+
+@dataclass
+class CameraConfig:
+    """Fixed camera viewpoint for rendering."""
+
+    name: str
+    width: int = 320
+    height: int = 240
+    # Camera pose (lookat style)
+    lookat: tuple[float, float, float] = (0.0, 0.0, 0.1)
+    distance: float = 0.8
+    azimuth: float = 135.0
+    elevation: float = -30.0
+
+
+# Default camera presets matching common LeRobot SO-101 setups
+DEFAULT_CAMERAS = {
+    "top": CameraConfig(
+        name="top",
+        width=640, height=480,
+        lookat=(0.0, 0.05, 0.1),
+        distance=0.6, azimuth=90.0, elevation=-60.0,
+    ),
+    "wrist.top": CameraConfig(
+        name="wrist.top",
+        width=640, height=480,
+        lookat=(0.0, 0.05, 0.15),
+        distance=0.4, azimuth=180.0, elevation=-45.0,
+    ),
+}
 
 
 class SteppingScheduler:
@@ -27,6 +64,7 @@ class SteppingScheduler:
         builder: SnapshotBuilder,
         physics_hz: int = 500,
         on_render: Optional[Callable[[], None]] = None,
+        cameras: dict[str, CameraConfig] | None = None,
     ) -> None:
         self.world = world
         self.applier = applier
@@ -34,6 +72,12 @@ class SteppingScheduler:
         self.physics_hz = physics_hz
         self._on_render = on_render
         self._tick = 0
+
+        # Camera rendering
+        self._cameras = cameras or {}
+        self._renderers: dict[str, object] = {}
+        if self._cameras:
+            self._init_renderers()
 
     @property
     def tick(self) -> int:
@@ -54,7 +98,10 @@ class SteppingScheduler:
                 self._tick += 1
         if self._on_render is not None:
             self._on_render()
-        return self.builder.build(clock=self._make_clock())
+        snap = self.builder.build(clock=self._make_clock())
+        if self._cameras:
+            snap = self._attach_cameras(snap)
+        return snap
 
     def reset(self, seed=None):
         """Reset MuJoCo state and return initial snapshot.
@@ -68,7 +115,31 @@ class SteppingScheduler:
         self._tick = 0
         if self._on_render is not None:
             self._on_render()
-        return self.builder.build(clock=self._make_clock())
+        snap = self.builder.build(clock=self._make_clock())
+        if self._cameras:
+            snap = self._attach_cameras(snap)
+        return snap
+
+    def _attach_cameras(self, snap):
+        """Render cameras and attach as SensorSample entries."""
+        from ..world._proto import world_pb
+        frames = self.render_cameras()
+        sensors = list(snap.sensors) if snap.sensors else []
+        for cam_name, pixels in frames.items():
+            sensors.append(
+                world_pb.SensorSample(
+                    ref=world_pb.SensorRef(robot_id="", sensor_id=cam_name),
+                    camera_frame=world_pb.CameraFrame(
+                        width=pixels.shape[1],
+                        height=pixels.shape[0],
+                        encoding="rgb8",
+                        data=pixels.tobytes(),
+                        capture_tick=self._tick,
+                    ),
+                )
+            )
+        snap.sensors = sensors
+        return snap
 
     def run_forever(self) -> None:
         """Not used — stepping scheduler is driven by IPC requests."""
@@ -77,4 +148,43 @@ class SteppingScheduler:
         )
 
     def stop(self) -> None:
-        """No-op — nothing to stop."""
+        """Clean up renderers."""
+        for r in self._renderers.values():
+            try:
+                r.close()
+            except Exception:
+                pass
+        self._renderers.clear()
+
+    # ── Camera rendering ──
+
+    def _init_renderers(self) -> None:
+        import mujoco
+        for cam_name, cfg in self._cameras.items():
+            renderer = mujoco.Renderer(
+                self.world.model, height=cfg.height, width=cfg.width
+            )
+            self._renderers[cam_name] = renderer
+            _log.info(
+                "camera initialized",
+                extra={"extra_fields": {"name": cam_name, "res": f"{cfg.width}x{cfg.height}"}},
+            )
+
+    def render_cameras(self) -> dict[str, np.ndarray]:
+        """Render all configured cameras, return {name: (H, W, 3) uint8}."""
+        import mujoco
+        frames: dict[str, np.ndarray] = {}
+        for cam_name, cfg in self._cameras.items():
+            renderer = self._renderers.get(cam_name)
+            if renderer is None:
+                continue
+            # Set up free camera
+            cam = mujoco.MjvCamera()
+            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            cam.lookat[:] = cfg.lookat
+            cam.distance = cfg.distance
+            cam.azimuth = cfg.azimuth
+            cam.elevation = cfg.elevation
+            renderer.update_scene(self.world.data, camera=cam)
+            frames[cam_name] = renderer.render().copy()
+        return frames

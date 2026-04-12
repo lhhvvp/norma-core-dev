@@ -83,6 +83,7 @@ class NormaSimEnv(gym.Env):
         auto_launch: bool = True,
         socket_path: str | Path | None = None,
         render_port: int = 0,
+        cameras: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.manifest_path = Path(manifest_path).resolve()
@@ -91,6 +92,7 @@ class NormaSimEnv(gym.Env):
         self.n_substeps = round(physics_hz / action_hz)
         self.actual_action_hz = physics_hz / self.n_substeps
         self.render_port = render_port
+        self.camera_names = cameras or []
 
         # Socket setup
         if socket_path is None:
@@ -128,6 +130,8 @@ class NormaSimEnv(gym.Env):
         ]
         if self.render_port > 0:
             cmd.extend(["--render-port", str(self.render_port)])
+        if self.camera_names:
+            cmd.extend(["--cameras"] + self.camera_names)
         # norma_sim needs its package on PYTHONPATH.  Derive from
         # this file's location: gym_env.py lives in norma_sim/, its
         # parent is the sim-server directory that must be on the path.
@@ -376,6 +380,17 @@ class NormaSimEnv(gym.Env):
                     else:
                         grippers[i] = 0.0
             obs["gripper"] = grippers
+
+        # Extract camera frames from sensors
+        if snapshot.sensors:
+            for sensor in snapshot.sensors:
+                if sensor.camera_frame is not None and sensor.ref is not None:
+                    cf = sensor.camera_frame
+                    cam_name = sensor.ref.sensor_id
+                    pixels = np.frombuffer(cf.data, dtype=np.uint8).reshape(
+                        cf.height, cf.width, 3
+                    )
+                    obs[f"camera.{cam_name}"] = pixels
 
         info = {}
         if snapshot.clock is not None:

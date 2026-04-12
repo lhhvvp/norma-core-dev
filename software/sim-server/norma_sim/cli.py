@@ -62,6 +62,13 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="If set, start mjviser web viewer on this port (e.g. 8012). "
              "Only effective in stepping mode.",
     )
+    ap.add_argument(
+        "--cameras",
+        nargs="*",
+        default=None,
+        help="Camera names to render (e.g. 'top wrist.top'). "
+             "Uses built-in presets. Only effective in stepping mode.",
+    )
     ap.add_argument("--log-level", default="INFO")
     return ap.parse_args(argv)
 
@@ -123,9 +130,21 @@ async def _async_main(args: argparse.Namespace) -> int:
             except ImportError:
                 log.warning("mjviser not installed; --render-port ignored")
 
+        # Camera config
+        cam_configs = None
+        if args.cameras:
+            from .scheduler.stepping import DEFAULT_CAMERAS
+            cam_configs = {}
+            for name in args.cameras:
+                if name in DEFAULT_CAMERAS:
+                    cam_configs[name] = DEFAULT_CAMERAS[name]
+                else:
+                    log.warning(f"unknown camera preset '{name}', skipping")
+
         stepping = SteppingScheduler(
             world, applier=applier, builder=builder,
             physics_hz=args.physics_hz, on_render=on_render,
+            cameras=cam_configs,
         )
         server = IpcServer(
             socket_path=socket_path,

@@ -42,6 +42,7 @@ class NormaSimRobotConfig:
     physics_hz: int = 500
     action_hz: int = 30
     render_port: int = 0
+    cameras: list[str] = field(default_factory=list)
 
 
 class NormaSimRobot:
@@ -74,10 +75,13 @@ class NormaSimRobot:
     @cached_property
     def observation_features(self) -> dict:
         """Flat dict of observation feature types (LeRobot contract)."""
-        features: dict[str, type] = {}
+        features: dict = {}
         for name in self.JOINT_NAMES:
             features[f"{name}.pos"] = float
         features[f"{self.GRIPPER_NAME}.pos"] = float
+        # Camera features: LeRobot expects "observation.images.<name>"
+        for cam_name in self.config.cameras:
+            features[f"observation.images.{cam_name}"] = (480, 640, 3)
         return features
 
     @cached_property
@@ -105,6 +109,7 @@ class NormaSimRobot:
             physics_hz=self.config.physics_hz,
             action_hz=self.config.action_hz,
             render_port=self.config.render_port,
+            cameras=self.config.cameras if self.config.cameras else None,
         )
         obs, info = self._env.reset()
         self._cache_obs(obs)
@@ -162,9 +167,13 @@ class NormaSimRobot:
                 self._current_obs[f"{name}.pos"] = float(joints[i])
 
         if len(gripper) > 0:
-            # LeRobot SO-Follower uses 0-100 scale for gripper
-            # NormaSimEnv uses 0-1 normalized → convert to 0-100
             self._current_obs[f"{self.GRIPPER_NAME}.pos"] = float(gripper[0]) * 100.0
+
+        # Camera images: NormaSimEnv key "camera.<name>" → LeRobot key "observation.images.<name>"
+        for key, val in gym_obs.items():
+            if key.startswith("camera.") and isinstance(val, np.ndarray):
+                cam_name = key[len("camera."):]
+                self._current_obs[f"observation.images.{cam_name}"] = val
 
     def _action_to_gym(self, action: dict[str, Any]) -> dict[str, Any]:
         """Convert flat LeRobot action dict → NormaSimEnv action dict."""
