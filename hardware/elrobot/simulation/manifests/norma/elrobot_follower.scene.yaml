@@ -9,7 +9,7 @@ robot_id: elrobot_follower
 mjcf_path: ../../mujoco/elrobot_follower/elrobot_follower.xml
 
 # No scene_overrides — elrobot_follower.xml's <option> is authoritative.
-# No scene_extras — the MJCF has its own lighting/floor setup.
+# No scene_extras — the engine-tier package's scene.xml wrapper provides lighting/floor (use that for visual inspection; this Norma manifest just loads the bare MJCF).
 
 actuator_annotations:
   - mjcf_actuator: act_motor_01

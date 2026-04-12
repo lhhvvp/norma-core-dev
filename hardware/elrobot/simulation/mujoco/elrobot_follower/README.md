@@ -18,6 +18,7 @@ ElRobot's 8-joint URDF kinematics.
 elrobot_follower/
 ├── elrobot_follower.xml     ← main MJCF (8 joints + 2 mimic slides)
 ├── elrobot_follower.urdf    ← URDF kinematic source of truth (used by test_urdf_parity)
+├── scene.xml                ← Menagerie-style wrapper with floor + lights (use with mujoco.viewer)
 ├── robot.yaml               ← machine-readable identity (source of truth)
 ├── VERSION                  ← semver (git-friendly)
 ├── LICENSE                  ← Apache-2.0
@@ -35,10 +36,26 @@ elrobot_follower/
 ```
 
 The STL mesh assets live inside this package at `assets/` (moved in MVP-3
-Chunk 1, commit `<TBD-mvp3-chunk1>`). The MJCF's `meshdir="assets"`
+Chunk 1, commit `51ecccd`). The MJCF's `meshdir="assets"`
 resolves to them. The package is now self-contained: it can be copied to
 any location (e.g. `/tmp/elrobot-test`) and `pytest tests/` runs cleanly
 without needing the rest of the NormaCore checkout on disk.
+
+## How to view
+
+To open an interactive 3D view of the ElRobot with floor + lights:
+
+```bash
+python3 -m mujoco.viewer hardware/elrobot/simulation/mujoco/elrobot_follower/scene.xml
+```
+
+The `scene.xml` is a Menagerie-style wrapper that `<include>`s the main
+`elrobot_follower.xml` and adds a directional light and a checker
+groundplane. Use `scene.xml` (not `elrobot_follower.xml`) for visual
+inspection — the bare main MJCF has no lighting/floor.
+
+For headless/CI use cases, the `tests/test_scene_loadable.py` smoke test
+verifies `scene.xml` compiles correctly without requiring a display.
 
 ## How to modify
 

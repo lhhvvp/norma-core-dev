@@ -7,6 +7,57 @@ Versioning is semver, independent of the `software/` crates.
 
 (nothing yet)
 
+## [0.2.1] — 2026-04-12
+
+### Added
+
+- `scene.xml` — Menagerie-style scene wrapper that `<include>`s the main
+  `elrobot_follower.xml` and adds:
+  - `<visual>` (headlight, haze, default camera angle)
+  - `<asset>` (skybox gradient texture, groundplane checker texture +
+    material)
+  - `<worldbody>` (directional `<light name="floor_light">` + `<geom
+    name="floor">` plane)
+  No `<compiler>` block (would override main MJCF's `meshdir="assets"`
+  via `<include>` namespace merge — codex iter-1 risk #1 mitigation).
+  No `<default>` block (would collide with main MJCF's
+  `<default class="elrobot">`).
+- `tests/test_scene_loadable.py` — 3-test smoke gate for `scene.xml`:
+  asserts `nu == 8` (include namespace merge worked), asserts
+  `mj_name2id(GEOM, "floor") >= 0`, asserts
+  `mj_name2id(LIGHT, "floor_light") >= 0`. Per spec Section 4 risk #3 /
+  codex iter-1 reframe, all assertions are name-based, NOT count-based
+  (`m.ngeom == N` would be fragile to future geometry additions).
+
+### Changed (polish backfills carried over from Chunk 1)
+
+- `README.md`: backfilled `<TBD-mvp3-chunk1>` placeholder with the
+  actual Chunk 1 commit SHA `51ecccd`. Added a `## How to view` section
+  documenting `python3 -m mujoco.viewer scene.xml`.
+- `manifests/norma/elrobot_follower.scene.yaml:12` (sibling Norma
+  manifests directory, not in this package): fixed stale comment
+  `# No scene_extras — the MJCF has its own lighting/floor setup.` —
+  the MJCF does NOT have its own lighting/floor (that was an MVP-2
+  Chunk 5 leftover comment from before MVP-3 EPC roadmap), now
+  `scene.xml` provides them.
+
+### Physics gate results (at this version)
+
+- Floor §3.1 acceptance gate: GREEN (no physics changes; same as v0.2.0).
+- Engine-tier package tests: 5 passed + 1 skipped (mjx if absent) — +1
+  vs v0.2.0 from `test_scene_loadable.py`.
+- `cp -r /tmp` self-containment: 5 passed + 1 skipped (mjx if absent)
+  — `scene.xml` is in-package and `<include>` resolves relative to
+  `scene.xml`'s directory.
+
+### Integration context
+
+- NormaCore main HEAD before this version: `0ddeb60` on main
+  (2026-04-12, Chunk 1 polish + γ doc commit immediately preceding
+  Chunk 2)
+- MVP-3 Engine Package Completion Chunk 2 commit: (this commit)
+- Roadmap spec: `docs/superpowers/specs/2026-04-12-mvp3-foundation-roadmap-design.md`
+
 ## [0.2.0] — 2026-04-12
 
 ### Changed (structural)
