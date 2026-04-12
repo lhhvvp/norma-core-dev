@@ -194,18 +194,26 @@ async def _async_main(args: argparse.Namespace) -> int:
 
     # ── Realtime mode: background physics thread ──
     if args.mode == "realtime":
-        # Optional mjviser for realtime mode
-        mjv_scene_rt = None
+        # Optional mjviser for realtime mode.
+        # IMPORTANT: ViserMujocoScene init takes 3-5s and would block the
+        # asyncio event loop, causing Station's IPC handshake to timeout.
+        # We defer it to a background thread so handshake completes first.
+        mjv_scene_holder = [None]  # mutable holder for closure
         if args.render_port > 0:
             try:
                 import viser
                 from mjviser import ViserMujocoScene
-                viser_server = viser.ViserServer(port=args.render_port)
-                mjv_scene_rt = ViserMujocoScene(viser_server, world.model, num_envs=1)
-                log.info(
-                    "mjviser started (realtime)",
-                    extra={"extra_fields": {"port": args.render_port}},
-                )
+
+                def _init_mjviser():
+                    vs = viser.ViserServer(port=args.render_port)
+                    scene = ViserMujocoScene(vs, world.model, num_envs=1)
+                    mjv_scene_holder[0] = scene
+                    log.info(
+                        "mjviser started (realtime)",
+                        extra={"extra_fields": {"port": args.render_port}},
+                    )
+
+                threading.Thread(target=_init_mjviser, name="mjviser-init", daemon=True).start()
             except ImportError:
                 log.warning("mjviser not installed; --render-port ignored")
 
@@ -221,8 +229,8 @@ async def _async_main(args: argparse.Namespace) -> int:
             except RuntimeError:
                 pass
             # Push to mjviser (same thread as physics, no lock needed)
-            if mjv_scene_rt is not None:
-                mjv_scene_rt.update_from_mjdata(world.data)
+            if mjv_scene_holder[0] is not None:
+                mjv_scene_holder[0].update_from_mjdata(world.data)
 
         scheduler = RealTimeScheduler(
             world,
