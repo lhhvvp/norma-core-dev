@@ -885,9 +885,9 @@ enumerated by recall instead of by exhaustive search.
   spec — no external commits add tests there, mjx skip is the only env
   variable, and the count for "1 mjx skip" is stable. Writing absolute
   counts like "4 passed + 1 skip(mjx)" for the package-local suite is
-  fine because if mjx becomes installed, the assertion can be expressed as
-  "4 passed + 0 skipped OR 5 passed + 0 skipped" using a stable conditional
-  in the plan.
+  fine because if mjx becomes installed, the assertion can be expressed
+  conditionally as "4 passed + 1 skipped (mjx absent) OR 5 passed +
+  0 skipped (mjx present)" in the plan.
 
   The original MVP-3 spec drafts wrote *cross-repo* absolute counts
   (`90 passed, 1 skipped` etc.), which would silently break if (a)
