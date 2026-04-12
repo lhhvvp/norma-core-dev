@@ -97,3 +97,27 @@ check-arch-invariants:
 	@if cargo tree -p sim-runtime 2>/dev/null | grep -q "st3215-wire"; then \
 	  echo "FAIL: sim-runtime transitively depends on st3215-wire"; exit 1; fi
 	@echo "All architecture invariants hold ✓"
+
+# —— MuJoCo web viewer (mjviser) ——————————————————————————————————————
+# Browser-based MuJoCo viewer for WSL2 (mujoco.viewer needs OpenGL).
+# Shows collision mesh, contact forces, joint sliders — open alongside
+# station web for full debug experience.
+#   station web: http://localhost:8889 (control)
+#   mjviser:     http://localhost:8012 (3D debug)
+
+MJVISER_PORT := 8012
+
+.PHONY: viewer-elrobot
+viewer-elrobot:
+	mjviser hardware/elrobot/simulation/mujoco/elrobot_follower/scene.xml \
+	  --port $(MJVISER_PORT)
+
+.PHONY: viewer-so100
+viewer-so100:
+	mjviser hardware/elrobot/simulation/vendor/menagerie/trs_so_arm100/scene.xml \
+	  --port $(MJVISER_PORT)
+
+.PHONY: viewer-so101
+viewer-so101:
+	mjviser hardware/elrobot/simulation/vendor/therobotstudio/SO101/scene.xml \
+	  --port $(MJVISER_PORT)
