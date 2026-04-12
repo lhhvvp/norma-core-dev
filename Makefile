@@ -129,9 +129,11 @@ viewer-so101:
 
 .PHONY: sim-debug-so101
 sim-debug-so101:
+	@echo "Cleaning up stale processes..."
+	@-fuser -k 8012/tcp 8888/tcp 8889/tcp 2>/dev/null; sleep 1
 	@echo "Starting station web (:8889) + mjviser (:8012)..."
 	@echo "  http://localhost:8889  ← station (control + motor state)"
-	@echo "  http://localhost:8012  ← mjviser (3D, synced with sim)"
+	@echo "  http://localhost:8012  ← mjviser (3D, synced with sim + camera feeds)"
 	@PYTHONPATH=$(SIM_PYTHONPATH) ./target/debug/station \
 	  -c software/station/bin/station/station-sim-therobotstudio.yaml \
 	  --web 0.0.0.0:8889 \
