@@ -121,6 +121,16 @@ class NormaSimRobot:
     def configure(self) -> None:
         pass  # sim doesn't need motor configuration
 
+    def reset(self, seed: int | None = None) -> dict[str, Any]:
+        """Reset simulation to initial state, return observation.
+
+        Useful between episodes in batch data generation or evaluation.
+        """
+        assert self._env is not None, "Robot not connected"
+        obs, info = self._env.reset(seed=seed)
+        self._cache_obs(obs)
+        return dict(self._current_obs)
+
     def get_observation(self) -> dict[str, Any]:
         """Return current observation as flat dict (LeRobot contract)."""
         return dict(self._current_obs)  # return copy
