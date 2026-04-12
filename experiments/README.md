@@ -33,6 +33,7 @@ experiments/<实验名>/
 | 实验 | 方向 | 参考源码 | 阶段 |
 |------|------|---------|------|
 | mjviser | Web MuJoCo 可视化 | mjviser-ref/ | Phase 1 |
+| robot-control-stack | Sim-Real 统一控制接口 | rcs-ref/ | Phase 1 |
 
 ## 与主系统的关系
 
