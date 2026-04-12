@@ -7,6 +7,48 @@ Versioning is semver, independent of the `software/` crates.
 
 (nothing yet)
 
+## [0.2.0] — 2026-04-12
+
+### Changed (structural)
+
+- Moved `assets/` (19 STL meshes) and `elrobot_follower.urdf` **into** this
+  package from `hardware/elrobot/simulation/`. The package is now fully
+  self-contained — `cp -r mujoco/elrobot_follower /tmp/test && cd /tmp/test
+  && pytest tests/` passes without needing the NormaCore checkout.
+- Simplified `elrobot_follower.xml`'s `<compiler meshdir="../../assets">`
+  to `meshdir="assets"` since assets now live in the same directory.
+- Upgraded `tests/test_urdf_parity.py` URDF fixture from `pytest.skip` to
+  hard `assert` — URDF is now mandatory package content; silent skip
+  would hide off-by-one path bugs.
+
+### Fixed (Chunk 0 余债 fold-ins, per MVP-3 Engine Package Completion roadmap Section 7)
+
+- `tests/test_urdf_parity.py:50-65` — turned the previously-unused
+  `elrobot_mjcf_path` parameter in
+  `test_urdf_and_mjcf_agree_on_actuated_joint_count` into an `assert
+  model.nu == 8` cross-check (lint smell → meaningful belt-and-suspenders
+  assertion). Codex iter-1 recommendation.
+- `tests/test_urdf_parity.py:53` — fixed docstring drift: "8 actuated
+  joints (7 revolute + 1 gripper primary)" → "8 revolute joints (7 arm
+  DoF + 1 gripper primary)". URDF parser treats all 8 as
+  `<joint type="revolute">`.
+- `CHANGELOG.md:96` — backfilled the `[0.1.0]` entry's "MVP-3 Chunk 0
+  commit: TBD" placeholder with the actual SHA `6ef605b`.
+
+### Physics gate results (at this version)
+
+- Floor §3.1 acceptance gate: GREEN (no physics changes; same as v0.1.0).
+- Engine-tier package tests: 4 passed + 1 skipped (mjx if absent).
+- `cp -r /tmp` self-containment: 4 passed + 1 skipped (mjx if absent) —
+  **first version where this is meaningful**.
+
+### Integration context
+
+- NormaCore main HEAD before this version: `aa65fd3` (or whatever the
+  spec landing commit was)
+- MVP-3 Engine Package Completion Chunk 1 commit: (this commit)
+- Roadmap spec: `docs/superpowers/specs/2026-04-12-mvp3-foundation-roadmap-design.md`
+
 ## [0.1.0] — 2026-04-12
 
 ### Added
@@ -79,10 +121,10 @@ Versioning is semver, independent of the `software/` crates.
 - Merged inertia for fixed joints (ST3215 motor mass collapsed into the
   parent revolute body) omits parallel-axis shift (~5.5e-6 kg·m²).
   Acceptable for Floor gates; re-evaluate for real-hardware tracking.
-- Assets (`*.stl`) still live at `hardware/elrobot/simulation/assets/`,
-  not inside this package. MJCF uses `meshdir="../../assets"`. This
-  prevents the package from being truly self-contained for upstream
-  contribution; a future chunk will move assets into the package.
+- Assets (`*.stl`) still live outside this package at v0.1.0 (under the
+  simulation tier's top-level `assets/` directory). MJCF uses
+  `meshdir="../../assets"`. **Resolved in v0.2.0 (MVP-3 Chunk 1)** — see
+  [0.2.0] entry above.
 - No `scene.xml` wrapper with lights/floor. Running
   `python -m mujoco.viewer hardware/elrobot/simulation/mujoco/elrobot_follower/elrobot_follower.xml`
   will show the arm without a floor. A future chunk will add a Menagerie-
@@ -93,5 +135,5 @@ Versioning is semver, independent of the `software/` crates.
 ### Integration context
 
 - NormaCore MVP-2 merge commit: `93c1597` on `main` (2026-04-12)
-- MVP-3 Chunk 0 commit: TBD (pending this chunk's execution)
+- MVP-3 Chunk 0 commit: 6ef605b on main (2026-04-12)
 - Chunk 0 spec: `docs/superpowers/specs/2026-04-12-mvp3-first-class-mjcf-design.md`

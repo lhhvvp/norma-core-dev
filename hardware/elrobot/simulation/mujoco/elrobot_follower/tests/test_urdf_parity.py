@@ -20,10 +20,17 @@ import pytest
 @pytest.fixture
 def urdf_path() -> Path:
     here = Path(__file__).resolve()
-    # tests/ → robot package → mujoco/ → simulation/
-    p = here.parent.parent.parent.parent / "elrobot_follower.urdf"
-    if not p.exists():
-        pytest.skip(f"ElRobot URDF not found at {p}")
+    # tests/ → robot package (the URDF lives at the root of mujoco/elrobot_follower/)
+    p = here.parent.parent / "elrobot_follower.urdf"
+    # URDF is now mandatory content of the package (since MVP-3 Chunk 1).
+    # If it's missing, that's a hard structural error, NOT a skip — silent
+    # skip would hide an off-by-one path bug. Codex iter-1 explicitly
+    # recommended this upgrade.
+    assert p.exists(), (
+        f"ElRobot URDF not found at {p}. URDF is mandatory content of "
+        f"this package after MVP-3 Chunk 1; check that the assets+urdf "
+        f"move was applied correctly."
+    )
     return p
 
 
@@ -50,9 +57,10 @@ def test_urdf_and_mjcf_agree_on_joint_names(urdf_path: Path, elrobot_mjcf_path: 
 def test_urdf_and_mjcf_agree_on_actuated_joint_count(
     urdf_path: Path, elrobot_mjcf_path: Path
 ):
-    """ElRobot has 8 actuated joints (7 revolute + 1 gripper primary).
-    The MJCF may have additional mimic joints (rev_motor_08_1, rev_motor_08_2)
-    that do not appear in the URDF as top-level actuated joints."""
+    """ElRobot has 8 revolute joints (7 arm DoF + 1 gripper primary).
+    The MJCF may have additional mimic prismatic joints (rev_motor_08_1,
+    rev_motor_08_2) that do not appear in the URDF as top-level
+    revolute joints."""
     urdf_root = ET.parse(urdf_path).getroot()
     urdf_actuated = {
         j.attrib["name"]
@@ -62,4 +70,11 @@ def test_urdf_and_mjcf_agree_on_actuated_joint_count(
     assert len(urdf_actuated) == 8, (
         f"Expected 8 actuated URDF joints, got {len(urdf_actuated)}: "
         f"{sorted(urdf_actuated)}"
+    )
+    # Cross-check: the MJCF should also have nu==8 actuators (codex
+    # iter-1 recommended turning the previously-unused elrobot_mjcf_path
+    # parameter into a belt-and-suspenders check).
+    model = mujoco.MjModel.from_xml_path(str(elrobot_mjcf_path))
+    assert model.nu == 8, (
+        f"Expected MJCF nu==8 actuators (matching URDF), got {model.nu}"
     )

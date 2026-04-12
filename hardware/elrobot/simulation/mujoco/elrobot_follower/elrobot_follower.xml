@@ -18,7 +18,7 @@
        with multipliers +/-0.0115) is preserved verbatim from the MVP-1
        MJCF — this is the P0 invariant per MVP-2 plan Chunk 5 Task 5.2. -->
 
-  <compiler angle="radian" meshdir="../../assets" autolimits="true"/>
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
 
   <option cone="elliptic" impratio="10"/>
 

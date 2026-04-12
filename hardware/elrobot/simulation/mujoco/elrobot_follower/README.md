@@ -17,11 +17,13 @@ ElRobot's 8-joint URDF kinematics.
 ```
 elrobot_follower/
 ├── elrobot_follower.xml     ← main MJCF (8 joints + 2 mimic slides)
+├── elrobot_follower.urdf    ← URDF kinematic source of truth (used by test_urdf_parity)
 ├── robot.yaml               ← machine-readable identity (source of truth)
 ├── VERSION                  ← semver (git-friendly)
 ├── LICENSE                  ← Apache-2.0
 ├── README.md                ← this file
 ├── CHANGELOG.md             ← physics-relevant changes
+├── assets/                  ← STL meshes referenced by elrobot_follower.xml (meshdir="assets")
 ├── measurements/            ← parameter provenance + future sysID data
 │   ├── README.md            ← folder purpose + workflow
 │   └── menagerie_diff.md    ← Menagerie→ElRobot parameter adaptation record
@@ -32,10 +34,11 @@ elrobot_follower/
     └── test_mjx_compat.py       ← MJX smoke test (placeholder)
 ```
 
-The shared assets live one level up at `hardware/elrobot/simulation/assets/`
-(not yet moved into this package). The MJCF's `meshdir="../../assets"`
-resolves to them. A future upstream-contribution chunk will move assets
-into this directory to make the package fully self-contained.
+The STL mesh assets live inside this package at `assets/` (moved in MVP-3
+Chunk 1, commit `<TBD-mvp3-chunk1>`). The MJCF's `meshdir="assets"`
+resolves to them. The package is now self-contained: it can be copied to
+any location (e.g. `/tmp/elrobot-test`) and `pytest tests/` runs cleanly
+without needing the rest of the NormaCore checkout on disk.
 
 ## How to modify
 

@@ -64,7 +64,7 @@ physics_baseline:
   sysid_complete: false
 
 version:
-  current: "0.1.0"
+  current: "0.2.0"
   changelog: CHANGELOG.md
   version_file: VERSION
 
