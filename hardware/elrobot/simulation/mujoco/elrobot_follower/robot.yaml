@@ -64,7 +64,7 @@ physics_baseline:
   sysid_complete: false
 
 version:
-  current: "0.2.1"
+  current: "0.2.2"
   changelog: CHANGELOG.md
   version_file: VERSION
 
@@ -76,5 +76,5 @@ upstream:
     - sysid_complete == true
     - Full CITATION.cff metadata
     - scene.xml wrapper with lights/floor (Menagerie convention; done at 0.2.1)
-    - Passing tests executable in isolation (no norma_sim dependency)
+    - Passing tests executable in isolation (done at 0.2.2)
   engaged: false

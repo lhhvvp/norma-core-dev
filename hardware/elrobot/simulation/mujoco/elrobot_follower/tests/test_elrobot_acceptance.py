@@ -2,7 +2,7 @@
 
 Pure-mujoco rewrite of the original sim-server integration test
 (software/sim-server/tests/integration/test_elrobot_acceptance.py).
-Uses raw mujoco.MjModel / mujoco.MjData — zero norma_sim imports.
+Uses raw mujoco.MjModel / mujoco.MjData — no application-layer imports.
 The manifest-layer coverage dropped by this rewrite is preserved by the
 sentinel test at
 software/sim-server/tests/integration/test_elrobot_manifest_sentinel.py.

@@ -34,17 +34,7 @@ def menagerie_scene_yaml(tmp_path: Path, menagerie_mjcf_path: Path) -> Path:
     return scene_yaml
 
 
-# --- ElRobot fixtures: skipped until Chunk 5 lands the hand-written MJCF ---
-
-@pytest.fixture
-def elrobot_mjcf_path(repo_root: Path) -> Path:
-    """Path to the hand-written ElRobot MJCF (Chunk 5 artifact).
-    Skipped during Chunks 2-4."""
-    p = repo_root / "hardware/elrobot/simulation/mujoco/elrobot_follower/elrobot_follower.xml"
-    if not p.exists():
-        pytest.skip(f"ElRobot MJCF not found at {p}; run Chunk 5 first")
-    return p
-
+# --- ElRobot fixtures ---
 
 @pytest.fixture
 def elrobot_scene_yaml(repo_root: Path) -> Path:

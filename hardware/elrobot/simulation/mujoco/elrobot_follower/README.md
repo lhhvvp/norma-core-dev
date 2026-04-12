@@ -29,8 +29,10 @@ elrobot_follower/
 │   ├── README.md            ← folder purpose + workflow
 │   └── menagerie_diff.md    ← Menagerie→ElRobot parameter adaptation record
 └── tests/                   ← engine-level validation
-    ├── conftest.py          ← single fixture (elrobot_mjcf_path)
+    ├── conftest.py              ← shared fixtures (elrobot_mjcf_path, elrobot_sim)
+    ├── test_elrobot_acceptance.py ← physics acceptance (Floors 1-6, pure mujoco)
     ├── test_mimic_gripper.py    ← P0 gripper mimic regression
+    ├── test_scene_loadable.py   ← scene.xml smoke gate
     ├── test_urdf_parity.py      ← URDF↔MJCF consistency gate
     └── test_mjx_compat.py       ← MJX smoke test (placeholder)
 ```
@@ -77,15 +79,21 @@ To change a physics parameter (armature, kp, dampratio, forcerange, ...):
 
 ## Relationship to NormaCore
 
-The Norma-specific runtime wrapper for this robot lives at
-`hardware/elrobot/simulation/manifests/norma/elrobot_follower.scene.yaml`.
-That wrapper — not this directory — is what `norma_sim`'s loader reads at
-runtime. This directory contains only engine-native files.
+This package contains the complete engine-tier test suite for the ElRobot
+follower arm, including physics-acceptance tests (Floors 1-6 from MVP-2
+spec S3.1). All tests use raw `mujoco` APIs and run without `norma_sim`
+on PYTHONPATH.
 
-The `software/sim-server/tests/integration/test_elrobot_acceptance.py`
-integration test still lives in the sim-server test tree because it
-imports `norma_sim.world.MuJoCoWorld`. Pure-MuJoCo tests that do not need
-`norma_sim` live here under `tests/`.
+The Norma application layer still maintains:
+- `hardware/elrobot/simulation/manifests/norma/elrobot_follower.scene.yaml`
+  — the Norma-specific runtime wrapper that maps MJCF actuator names
+  (`act_motor_*`) to client-facing IDs (`rev_motor_*`) with capability
+  annotations.
+- `software/sim-server/tests/integration/test_elrobot_manifest_sentinel.py`
+  — a single sentinel test exercising the full
+  `scene.yaml -> load_manifest -> MuJoCoWorld -> mj_step` pipeline.
+- `software/sim-server/tests/integration/test_full_loop.py` and other
+  Norma-specific integration tests that depend on `norma_sim`.
 
 ## Upstream contribution
 

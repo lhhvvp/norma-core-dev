@@ -3,9 +3,50 @@
 Follows a subset of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is semver, independent of the `software/` crates.
 
-## [Unreleased]
+## [0.2.2] — 2026-04-12
 
-(nothing yet)
+### Added
+
+- `tests/test_elrobot_acceptance.py` — 13-item physics acceptance suite
+  (Floors 1-6) rewritten from the sim-server integration test to use raw
+  `mujoco.MjModel` / `mujoco.MjData` APIs. Zero `norma_sim` imports.
+  This is the capstone of MVP-3 Engine Package Completion: the package
+  now has full physics-acceptance coverage runnable in isolation.
+- `software/sim-server/tests/integration/test_elrobot_manifest_sentinel.py`
+  (in sim-server, not this package) — 1-test sentinel exercising the full
+  `scene.yaml -> load_manifest -> MuJoCoWorld -> mj_step` pipeline.
+  Preserves manifest-layer coverage that the pure-mujoco rewrite
+  intentionally drops.
+
+### Changed
+
+- `tests/conftest.py`: added `elrobot_sim` fixture (function-scoped
+  `MjModel + MjData` pair) shared by the 13 acceptance tests.
+- `tests/test_mimic_gripper.py:1`: unicode star -> `[P0]` ASCII (Chunk 0
+  remainder Item 4).
+- `README.md`: rewrote "Relationship to NormaCore" section — engine-tier
+  acceptance tests now live in this package; sim-server retains only the
+  manifest-pipeline sentinel and Norma-specific integration tests.
+
+### Removed
+
+- `software/sim-server/tests/integration/test_elrobot_acceptance.py`
+  (from sim-server, not this package) — the original norma_sim-coupled
+  version. All 13 physics assertions are preserved in the new engine-tier
+  file; manifest-layer coverage is preserved by the sentinel.
+
+### Physics gate results (at this version)
+
+- Floor S3.1 acceptance gate: GREEN (no physics changes; same as v0.2.1).
+- Engine-tier package tests: 20 passed + 1 skipped (mjx if absent).
+- `cp -r /tmp` self-containment: 20 passed + 1 skipped.
+
+### Integration context
+
+- NormaCore main HEAD before this version: `6d4ddb4` on main
+  (2026-04-12, Chunk 2 commit immediately preceding Chunk 3)
+- MVP-3 Engine Package Completion Chunk 3 commits: (this commit pair)
+- Roadmap spec: `docs/superpowers/specs/2026-04-12-mvp3-foundation-roadmap-design.md`
 
 ## [0.2.1] — 2026-04-12
 
@@ -152,7 +193,9 @@ Versioning is semver, independent of the `software/` crates.
   baseline passed first-try under MuJoCo's Coulomb frictionloss + gravity
   bleed, contradicting an analytical PD overshoot prediction). Verified
   via `software/sim-server/tests/integration/test_elrobot_acceptance.py`
-  which stays in sim-server because it depends on `norma_sim`.
+  which stays in sim-server because it depends on `norma_sim` (removed
+  in 0.2.2 — physics tests moved to engine package, manifest-layer
+  coverage preserved by sentinel).
 - Ceiling §3.2 item 7 (web UI slider responsiveness including M1): PASS
   (manual browser smoke test 2026-04-12). MVP-1's M1-unresponsive
   regression is resolved.

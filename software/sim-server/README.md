@@ -122,7 +122,7 @@ python3 -m mujoco.viewer hardware/elrobot/simulation/vendor/menagerie/trs_so_arm
 
 If ElRobot looks materially worse, record the discrepancy but do not
 block — Floor §3.1 acceptance tests
-(`pytest software/sim-server/tests/integration/test_elrobot_acceptance.py`)
+(`pytest hardware/elrobot/simulation/mujoco/elrobot_follower/tests/test_elrobot_acceptance.py`)
 are the hard gate for MVP-2.
 
 ### Troubleshooting
