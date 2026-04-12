@@ -90,7 +90,10 @@ def main():
         }
 
     dataset_dir = Path("datasets/norma_sim_pick_demo")
-    dataset_dir.mkdir(parents=True, exist_ok=True)
+    if dataset_dir.exists():
+        import shutil
+        shutil.rmtree(dataset_dir)
+    dataset_dir.parent.mkdir(parents=True, exist_ok=True)
 
     dataset = LeRobotDataset.create(
         repo_id="norma/sim_pick_demo",

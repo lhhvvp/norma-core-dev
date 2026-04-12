@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Batch data generator for ACT training with domain randomization.
+"""Parallel batch data generator for ACT training with domain randomization.
 
-Generates a LeRobot-compatible dataset of scripted pick-and-place
-trajectories with randomized target positions, speeds, and noise.
-
-Each episode follows: home → above → approach → grasp → lift → carry → release → home
-with per-episode randomization of joint targets, interpolation speed,
-action noise, and starting posture.
+Uses N worker processes, each running its own MuJoCo sim, to generate
+episodes in parallel. Workers save raw episode data as .npz files;
+the main process then builds the LeRobot dataset sequentially.
 
 Usage:
     cd software/sim-server
-    PYTHONPATH=. python3 scripts/batch_generate.py
-    PYTHONPATH=. python3 scripts/batch_generate.py --episodes 50 --no-videos  # quick test
+    PYTHONPATH=. MUJOCO_GL=egl python3 scripts/batch_generate.py
+    PYTHONPATH=. MUJOCO_GL=egl python3 scripts/batch_generate.py --episodes 50 --workers 4
 
 Output: datasets/norma_sim_pick_v1/ (LeRobot v3 format)
 """
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
+import os
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -30,24 +31,20 @@ if _sim_server_dir not in sys.path:
     sys.path.insert(0, _sim_server_dir)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MANIFEST = REPO_ROOT / "hardware/elrobot/simulation/manifests/norma/therobotstudio_so101_tabletop.scene.yaml"
+MANIFEST = str(REPO_ROOT / "hardware/elrobot/simulation/manifests/norma/therobotstudio_so101_tabletop.scene.yaml")
+
+JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
+GRIPPER_NAME = "gripper"
+CAMERAS = ["top", "wrist.top"]
+TASK = "pick up the red cube and place it to the side"
 
 
 def interpolate(start: list[float], end: list[float], t: float) -> list[float]:
-    """Linear interpolation between two joint vectors."""
     return [s + (e - s) * t for s, e in zip(start, end)]
 
 
 def generate_waypoints(rng: np.random.Generator) -> list[tuple]:
-    """Generate one set of randomized pick-and-place waypoints.
-
-    Randomizes:
-    - shoulder_pan target: where to place (-0.8 to 0.8 rad)
-    - elbow_flex approach depth: how deep to reach (1.2 to 1.6 rad)
-    - lift height: how high to lift (0.8 to 1.2 rad)
-    - speed factor: overall motion speed (0.7x to 1.3x)
-    - home position: slight jitter on starting posture
-    """
+    """Generate randomized pick-and-place waypoints."""
     pan = rng.uniform(-0.8, 0.8)
     approach_flex = rng.uniform(1.2, 1.6)
     lift_flex = rng.uniform(0.8, 1.2)
@@ -56,8 +53,7 @@ def generate_waypoints(rng: np.random.Generator) -> list[tuple]:
     def s(base_steps: int) -> int:
         return max(10, int(base_steps * speed))
 
-    home_noise = rng.normal(0, 0.05, size=5)
-    home = [float(n) for n in home_noise]  # small offset from zeros
+    home = [float(n) for n in rng.normal(0, 0.05, size=5)]
 
     return [
         ("home",      home,                                        0, s(30)),
@@ -71,49 +67,170 @@ def generate_waypoints(rng: np.random.Generator) -> list[tuple]:
     ]
 
 
+# ─── Worker ────────────────────────────────────────────────────────────
+
+def _worker_init():
+    """Suppress KeyboardInterrupt in worker processes."""
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def _generate_one_episode(robot, ep_idx, base_seed, action_noise, tmp_dir):
+    """Generate one episode using an already-connected robot. Returns .npz path."""
+    robot.reset()
+
+    rng = np.random.default_rng(seed=base_seed + ep_idx)
+    waypoints = generate_waypoints(rng)
+
+    states, actions, images_top, images_wrist = [], [], [], []
+    current_joints = list(waypoints[0][1])
+    current_gripper = float(waypoints[0][2])
+
+    for wp_name, target_joints, target_gripper, n_steps in waypoints:
+        start_joints = list(current_joints)
+        start_gripper = current_gripper
+
+        for step in range(n_steps):
+            t = (step + 1) / n_steps
+            joints = interpolate(start_joints, target_joints, t)
+            gripper = start_gripper + (target_gripper - start_gripper) * t
+            noisy_joints = [j + rng.normal(0, action_noise) for j in joints]
+
+            action = {f"{n}.pos": noisy_joints[i] for i, n in enumerate(JOINT_NAMES)}
+            action[f"{GRIPPER_NAME}.pos"] = gripper
+
+            robot.send_action(action)
+            obs = robot.get_observation()
+
+            state_vec = [obs[f"{n}.pos"] for n in JOINT_NAMES] + [obs[f"{GRIPPER_NAME}.pos"]]
+            action_vec = list(noisy_joints) + [gripper]
+
+            states.append(np.array(state_vec, dtype=np.float32))
+            actions.append(np.array(action_vec, dtype=np.float32))
+
+            img_top = obs.get("observation.images.top")
+            img_wrist = obs.get("observation.images.wrist.top")
+            if img_top is not None:
+                images_top.append(img_top)
+            if img_wrist is not None:
+                images_wrist.append(img_wrist)
+
+        current_joints = target_joints
+        current_gripper = float(target_gripper)
+
+    out_path = os.path.join(tmp_dir, f"ep_{ep_idx:06d}.npz")
+    np.savez(
+        out_path,
+        states=np.array(states),
+        actions=np.array(actions),
+        images_top=np.array(images_top) if images_top else np.array([], dtype=np.uint8),
+        images_wrist=np.array(images_wrist) if images_wrist else np.array([], dtype=np.uint8),
+    )
+    return out_path
+
+
+def _worker_batch(args: tuple) -> list[str]:
+    """Worker: create ONE sim, reuse it for all episodes in batch."""
+    ep_indices, base_seed, action_noise, manifest_path, fps, tmp_dir = args
+
+    from norma_sim.lerobot_robot import NormaSimRobot, NormaSimRobotConfig
+
+    config = NormaSimRobotConfig(
+        manifest_path=manifest_path,
+        physics_hz=500,
+        action_hz=fps,
+        render_port=0,
+        cameras=CAMERAS,
+    )
+    robot = NormaSimRobot(config)
+    robot.connect()
+
+    paths = []
+    for ep_idx in ep_indices:
+        path = _generate_one_episode(robot, ep_idx, base_seed, action_noise, tmp_dir)
+        paths.append(path)
+
+    robot.disconnect()
+    return paths
+
+
+# ─── Main ──────────────────────────────────────────────────────────────
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Batch data generator for ACT training")
-    parser.add_argument("--episodes", type=int, default=200, help="Number of episodes to generate")
-    parser.add_argument("--fps", type=int, default=30, help="Dataset FPS")
+    parser = argparse.ArgumentParser(description="Parallel batch data generator for ACT training")
+    parser.add_argument("--episodes", type=int, default=200)
+    parser.add_argument("--workers", type=int, default=0, help="Parallel workers (0=auto)")
+    parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--dataset-dir", type=str, default="datasets/norma_sim_pick_v1")
     parser.add_argument("--repo-id", type=str, default="norma/sim_pick_v1")
-    parser.add_argument("--action-noise", type=float, default=0.02, help="Action noise std (rad)")
+    parser.add_argument("--action-noise", type=float, default=0.02, help="Rad")
     parser.add_argument("--no-videos", action="store_true", help="Save as images instead of MP4")
-    parser.add_argument("--seed", type=int, default=0, help="Base random seed")
+    parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    n_workers = args.workers if args.workers > 0 else min(mp.cpu_count() - 2, args.episodes, 16)
+    n_workers = max(1, n_workers)
 
-    from norma_sim.lerobot_robot import NormaSimRobot, NormaSimRobotConfig
-
-    print(f"=== Batch Data Generator ===")
+    print(f"=== Parallel Batch Data Generator ===")
     print(f"  Episodes:     {args.episodes}")
+    print(f"  Workers:      {n_workers}")
     print(f"  FPS:          {args.fps}")
     print(f"  Dataset:      {args.dataset_dir}")
     print(f"  Action noise: {args.action_noise} rad")
     print(f"  Videos:       {not args.no_videos}")
-    print(f"  Base seed:    {args.seed}")
+    print(f"  Seed:         {args.seed}")
     print()
 
-    # ── 1. Create robot ──
-    config = NormaSimRobotConfig(
-        manifest_path=str(MANIFEST),
-        physics_hz=500,
-        action_hz=args.fps,
-        render_port=0,  # headless for speed
-        cameras=["top", "wrist.top"],
-    )
-    robot = NormaSimRobot(config)
-    robot.connect()
-    print(f"Robot connected. Obs features: {list(robot.observation_features.keys())}")
+    # ── Phase 1: Parallel episode generation ──
+    tmp_dir = tempfile.mkdtemp(prefix="norma_batch_")
+    print(f"Phase 1: Generating episodes in parallel → {tmp_dir}")
 
-    # ── 2. Create LeRobot dataset ──
+    # Split episodes across workers — each worker gets a contiguous batch
+    # so it can reuse one sim subprocess for multiple episodes
+    indices = list(range(args.episodes))
+    chunk_size = max(1, len(indices) // n_workers)
+    chunks = []
+    for i in range(0, len(indices), chunk_size):
+        chunks.append(indices[i:i + chunk_size])
+    # Rebalance: merge last tiny chunk into previous
+    if len(chunks) > n_workers and len(chunks[-1]) < chunk_size // 2:
+        chunks[-2].extend(chunks.pop())
+    actual_workers = len(chunks)
+
+    worker_args = [
+        (chunk, args.seed, args.action_noise, MANIFEST, args.fps, tmp_dir)
+        for chunk in chunks
+    ]
+
+    t0 = time.monotonic()
+    completed = 0
+
+    with mp.Pool(actual_workers, initializer=_worker_init) as pool:
+        try:
+            for paths in pool.imap_unordered(_worker_batch, worker_args):
+                completed += len(paths)
+                elapsed = time.monotonic() - t0
+                rate = completed / elapsed
+                eta = (args.episodes - completed) / rate if rate > 0 else 0
+                print(f"  {completed:4d}/{args.episodes} episodes | {elapsed:.0f}s | {rate:.1f} ep/s | ETA {eta:.0f}s")
+        except KeyboardInterrupt:
+            pool.terminate()
+            pool.join()
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            print("\nAborted.")
+            return
+
+    t_gen = time.monotonic() - t0
+    print(f"\nPhase 1 done: {completed} episodes in {t_gen:.1f}s ({t_gen/60:.1f} min)\n")
+
+    # ── Phase 2: Build LeRobot dataset from .npz files ──
+    print("Phase 2: Building LeRobot dataset...")
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    motor_names = [f"{n}.pos" for n in robot.JOINT_NAMES] + [f"{robot.GRIPPER_NAME}.pos"]
-
+    motor_names = [f"{n}.pos" for n in JOINT_NAMES] + [f"{GRIPPER_NAME}.pos"]
     features = {
         "observation.state": {
             "dtype": "float32",
@@ -126,7 +243,7 @@ def main():
             "names": {"motors": motor_names},
         },
     }
-    for cam_name in config.cameras:
+    for cam_name in CAMERAS:
         features[f"observation.images.{cam_name}"] = {
             "dtype": "image",
             "shape": (480, 640, 3),
@@ -134,7 +251,9 @@ def main():
         }
 
     dataset_dir = Path(args.dataset_dir)
-    dataset_dir.mkdir(parents=True, exist_ok=True)
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
+    dataset_dir.parent.mkdir(parents=True, exist_ok=True)
 
     use_videos = not args.no_videos
     dataset = LeRobotDataset.create(
@@ -144,97 +263,52 @@ def main():
         root=str(dataset_dir),
         robot_type="norma_sim",
         use_videos=use_videos,
-        image_writer_processes=2 if use_videos else 0,
-        image_writer_threads=4 if use_videos else 1,
+        image_writer_processes=4 if use_videos else 0,
+        image_writer_threads=4,
     )
 
-    # ── 3. Record episodes ──
-    print(f"\nRecording {args.episodes} episodes...\n")
-    t0 = time.monotonic()
+    t1 = time.monotonic()
+    total_frames = 0
+    for ep_idx in range(args.episodes):
+        npz_path = os.path.join(tmp_dir, f"ep_{ep_idx:06d}.npz")
+        data = np.load(npz_path)
+        n_frames = len(data["states"])
 
-    for ep in range(args.episodes):
-        rng = np.random.default_rng(seed=args.seed + ep)
-        waypoints = generate_waypoints(rng)
-
-        # Reset sim between episodes for clean state
-        robot.reset()
-
-        # Start from this episode's randomized home
-        current_joints = list(waypoints[0][1])
-        current_gripper = float(waypoints[0][2])
-        frame_count = 0
-
-        for wp_name, target_joints, target_gripper, n_steps in waypoints:
-            start_joints = list(current_joints)
-            start_gripper = current_gripper
-
-            for step in range(n_steps):
-                t = (step + 1) / n_steps
-
-                # Interpolate toward target
-                joints = interpolate(start_joints, target_joints, t)
-                gripper = start_gripper + (target_gripper - start_gripper) * t
-
-                # Add action noise (not to gripper — it's binary open/close)
-                noisy_joints = [j + rng.normal(0, args.action_noise) for j in joints]
-
-                # Build and send action (LeRobot 0-100 gripper scale)
-                action = {}
-                for i, name in enumerate(robot.JOINT_NAMES):
-                    action[f"{name}.pos"] = noisy_joints[i]
-                action[f"{robot.GRIPPER_NAME}.pos"] = gripper
-
-                robot.send_action(action)
-                obs = robot.get_observation()
-
-                # State vector: actual observed positions
-                state = [obs[f"{n}.pos"] for n in robot.JOINT_NAMES]
-                state.append(obs[f"{robot.GRIPPER_NAME}.pos"])
-
-                # Action vector: commanded targets (with noise)
-                action_vec = list(noisy_joints) + [gripper]
-
-                frame = {
-                    "observation.state": np.array(state, dtype=np.float32),
-                    "action": np.array(action_vec, dtype=np.float32),
-                    "task": "pick up the red cube and place it to the side",
-                }
-
-                for cam_name in config.cameras:
-                    img_key = f"observation.images.{cam_name}"
-                    if img_key in obs:
-                        frame[img_key] = obs[img_key]
-
-                dataset.add_frame(frame)
-                frame_count += 1
-
-            current_joints = target_joints
-            current_gripper = float(target_gripper)
+        for i in range(n_frames):
+            frame = {
+                "observation.state": data["states"][i],
+                "action": data["actions"][i],
+                "task": TASK,
+            }
+            if data["images_top"].size > 0:
+                frame["observation.images.top"] = data["images_top"][i]
+            if data["images_wrist"].size > 0:
+                frame["observation.images.wrist.top"] = data["images_wrist"][i]
+            dataset.add_frame(frame)
 
         dataset.save_episode()
+        total_frames += n_frames
+        data.close()
+        os.unlink(npz_path)  # free disk as we go
 
-        elapsed = time.monotonic() - t0
-        eps_per_sec = (ep + 1) / elapsed
-        eta = (args.episodes - ep - 1) / eps_per_sec if eps_per_sec > 0 else 0
-        print(
-            f"  Episode {ep + 1:4d}/{args.episodes} | "
-            f"{frame_count:3d} frames | "
-            f"{elapsed:.0f}s elapsed | "
-            f"ETA {eta:.0f}s"
-        )
+        if (ep_idx + 1) % 20 == 0 or ep_idx == args.episodes - 1:
+            print(f"  {ep_idx + 1:4d}/{args.episodes} episodes written | {total_frames} frames")
 
-    # ── 4. Finalize ──
-    dataset.consolidate()
+    t_build = time.monotonic() - t1
+    print(f"Phase 2 done: {t_build:.1f}s ({t_build/60:.1f} min)\n")
+
+    # ── Cleanup ──
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     elapsed_total = time.monotonic() - t0
-    print(f"\n=== Done ===")
+    print(f"=== Complete ===")
     print(f"  Directory:  {dataset_dir}")
     print(f"  Episodes:   {dataset.num_episodes}")
     print(f"  Frames:     {dataset.num_frames}")
     print(f"  Features:   {list(dataset.features.keys())}")
-    print(f"  Time:       {elapsed_total:.1f}s ({elapsed_total / 60:.1f} min)")
-
-    robot.disconnect()
+    print(f"  Total time: {elapsed_total:.1f}s ({elapsed_total / 60:.1f} min)")
+    print(f"    Phase 1 (generate): {t_gen:.1f}s")
+    print(f"    Phase 2 (dataset):  {t_build:.1f}s")
 
 
 if __name__ == "__main__":
