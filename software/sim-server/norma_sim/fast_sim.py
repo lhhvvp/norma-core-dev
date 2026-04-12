@@ -24,6 +24,7 @@ from typing import Any
 import mujoco
 import numpy as np
 
+from .cameras import DEFAULT_CAMERAS
 from .world.capabilities import command_value_to_ctrl, qpos_to_position_value
 from .world.model import MuJoCoWorld
 
@@ -86,10 +87,13 @@ class FastSim:
             self._renderers[cam_name] = mujoco.Renderer(self.model, height=h, width=w)
             self._cam_configs[cam_name] = (h, w)
 
-        # Camera pose defaults (same as stepping.py DEFAULT_CAMERAS)
+        # Camera pose fallbacks from shared presets
         self._camera_poses: dict[str, dict] = {
-            "top": dict(lookat=(0.0, 0.05, 0.1), distance=0.6, azimuth=90.0, elevation=-60.0),
-            "wrist.top": dict(lookat=(0.0, 0.05, 0.15), distance=0.4, azimuth=180.0, elevation=-45.0),
+            name: dict(
+                lookat=cfg.lookat, distance=cfg.distance,
+                azimuth=cfg.azimuth, elevation=cfg.elevation,
+            )
+            for name, cfg in DEFAULT_CAMERAS.items()
         }
 
     def reset(self) -> dict[str, Any]:

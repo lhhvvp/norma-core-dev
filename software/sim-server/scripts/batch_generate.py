@@ -29,8 +29,11 @@ if _sim_server_dir not in sys.path:
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = str(REPO_ROOT / "hardware/elrobot/simulation/manifests/norma/therobotstudio_so101_tabletop.scene.yaml")
 
-JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
-GRIPPER_NAME = "gripper"
+from norma_sim.lerobot_helpers import (
+    JOINT_NAMES, GRIPPER_NAME, ALL_MOTOR_NAMES,
+    build_state_vector, build_action_vector,
+)
+
 TASK = "pick up the red cube and place it to the side"
 
 
@@ -102,17 +105,16 @@ def main():
     # ── 2. Create LeRobot dataset ──
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    motor_names = [f"{n}.pos" for n in JOINT_NAMES] + [f"{GRIPPER_NAME}.pos"]
     features = {
         "observation.state": {
             "dtype": "float32",
-            "shape": (len(motor_names),),
-            "names": {"motors": motor_names},
+            "shape": (len(ALL_MOTOR_NAMES),),
+            "names": {"motors": ALL_MOTOR_NAMES},
         },
         "action": {
             "dtype": "float32",
-            "shape": (len(motor_names),),
-            "names": {"motors": motor_names},
+            "shape": (len(ALL_MOTOR_NAMES),),
+            "names": {"motors": ALL_MOTOR_NAMES},
         },
     }
     for cam_name in args.cameras:
@@ -167,14 +169,9 @@ def main():
                     gripper_normalized=gripper,
                 )
 
-                # State: actual positions from sim (gripper 0-1 → 0-100 LeRobot scale)
-                state_vec = list(obs["joints"]) + [float(obs["gripper"][0]) * 100.0]
-                # Action: commanded targets (gripper 0-1 → 0-100)
-                action_vec = list(noisy_joints) + [gripper * 100.0]
-
                 frame = {
-                    "observation.state": np.array(state_vec, dtype=np.float32),
-                    "action": np.array(action_vec, dtype=np.float32),
+                    "observation.state": build_state_vector(obs),
+                    "action": build_action_vector(noisy_joints, gripper),
                     "task": TASK,
                 }
                 for cam_name in args.cameras:

@@ -4,9 +4,8 @@
 Downloads a pre-trained ACT checkpoint from HuggingFace, runs inference
 with NormaSimRobot, and visualizes in mjviser.
 
-NOTE: Uses dummy camera images (zeros) since NormaSimEnv doesn't have
-camera obs yet.  The policy actions will be garbage — this test verifies
-the PIPELINE (load → infer → step → visualize), not task success.
+Uses real MuJoCo-rendered camera images when cameras are configured.
+Falls back to dummy images (zeros) if no cameras are available.
 
 Usage:
     fuser -k 8012/tcp 2>/dev/null

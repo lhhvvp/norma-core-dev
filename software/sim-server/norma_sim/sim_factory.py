@@ -1,19 +1,23 @@
 """Sim backend factory — CPU or GPU, same interface.
 
-Selects the appropriate simulation backend based on availability
-and requested scale. Both backends share manifest loading and
-capability conversion from ``norma_sim.world``.
+.. warning::
+
+    **Experimental.** The CPU (FastSim) and GPU (FastSimMJX) backends
+    do NOT yet have interface parity:
+
+    - FastSimMJX has no camera rendering (state-only observations)
+    - FastSimMJX requires simplified MJCF for practical JIT times
+    - Auto-selection may pick a backend that silently drops features
+
+    Prefer importing ``FastSim`` directly for production scripts.
+    This factory is useful for experimentation and future RL work.
 
 Usage::
 
     from norma_sim.sim_factory import create_sim
 
-    # Auto-select: CPU for small runs, MJX for large
-    sim = create_sim("scene.yaml", cameras={"top": (224, 224)})
-
-    # Force backend
-    sim = create_sim("scene.yaml", backend="cpu")
-    sim = create_sim("scene.yaml", backend="mjx", n_envs=4096)
+    sim = create_sim("scene.yaml", backend="cpu")           # recommended
+    sim = create_sim("scene.yaml", backend="mjx", n_envs=4) # experimental
 """
 from __future__ import annotations
 

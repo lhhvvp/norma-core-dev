@@ -15,43 +15,13 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from ..cameras import CameraConfig, DEFAULT_CAMERAS  # noqa: F401 — re-exported
 from ..ipc.codec import WorldClock
 from ..world.actuation import ActuationApplier
 from ..world.model import MuJoCoWorld
 from ..world.snapshot import SnapshotBuilder
 
 _log = logging.getLogger("norma_sim.scheduler.stepping")
-
-
-@dataclass
-class CameraConfig:
-    """Fixed camera viewpoint for rendering."""
-
-    name: str
-    width: int = 320
-    height: int = 240
-    # Camera pose (lookat style)
-    lookat: tuple[float, float, float] = (0.0, 0.0, 0.1)
-    distance: float = 0.8
-    azimuth: float = 135.0
-    elevation: float = -30.0
-
-
-# Default camera presets matching common LeRobot SO-101 setups
-DEFAULT_CAMERAS = {
-    "top": CameraConfig(
-        name="top",
-        width=640, height=480,
-        lookat=(0.0, 0.05, 0.1),
-        distance=0.6, azimuth=90.0, elevation=-60.0,
-    ),
-    "wrist.top": CameraConfig(
-        name="wrist.top",
-        width=640, height=480,
-        lookat=(0.0, 0.05, 0.15),
-        distance=0.4, azimuth=180.0, elevation=-45.0,
-    ),
-}
 
 
 class SteppingScheduler:

@@ -56,15 +56,8 @@ class NormaSimRobot:
 
     name = "norma_sim"
 
-    # Motor names matching LeRobot SO-Follower convention
-    JOINT_NAMES = [
-        "shoulder_pan",
-        "shoulder_lift",
-        "elbow_flex",
-        "wrist_flex",
-        "wrist_roll",
-    ]
-    GRIPPER_NAME = "gripper"
+    # Imported from shared helpers — single source of truth
+    from .lerobot_helpers import JOINT_NAMES, GRIPPER_NAME
 
     def __init__(self, config: NormaSimRobotConfig) -> None:
         self.config = config
@@ -168,32 +161,11 @@ class NormaSimRobot:
 
     def _cache_obs(self, gym_obs: dict[str, Any]) -> None:
         """Convert NormaSimEnv obs dict → flat LeRobot obs dict."""
-        self._current_obs = {}
-        joints = gym_obs.get("joints", np.array([]))
-        gripper = gym_obs.get("gripper", np.array([]))
-
-        for i, name in enumerate(self.JOINT_NAMES):
-            if i < len(joints):
-                self._current_obs[f"{name}.pos"] = float(joints[i])
-
-        if len(gripper) > 0:
-            self._current_obs[f"{self.GRIPPER_NAME}.pos"] = float(gripper[0]) * 100.0
-
-        # Camera images: NormaSimEnv key "camera.<name>" → LeRobot key "observation.images.<name>"
-        for key, val in gym_obs.items():
-            if key.startswith("camera.") and isinstance(val, np.ndarray):
-                cam_name = key[len("camera."):]
-                self._current_obs[f"observation.images.{cam_name}"] = val
+        from .lerobot_helpers import sim_obs_to_lerobot
+        self._current_obs = sim_obs_to_lerobot(gym_obs)
 
     def _action_to_gym(self, action: dict[str, Any]) -> dict[str, Any]:
         """Convert flat LeRobot action dict → NormaSimEnv action dict."""
-        joints = np.array([
-            action.get(f"{name}.pos", 0.0)
-            for name in self.JOINT_NAMES
-        ], dtype=np.float64)
-
-        gripper_val = action.get(f"{self.GRIPPER_NAME}.pos", 50.0)
-        # LeRobot uses 0-100 scale → NormaSimEnv expects 0-1
-        gripper = np.array([gripper_val / 100.0], dtype=np.float64)
-
-        return {"joints": joints, "gripper": gripper}
+        from .lerobot_helpers import lerobot_action_to_sim
+        joints, gripper = lerobot_action_to_sim(action)
+        return {"joints": joints, "gripper": np.array([gripper], dtype=np.float64)}

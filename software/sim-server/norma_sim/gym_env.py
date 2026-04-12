@@ -1,6 +1,7 @@
 """`NormaSimEnv` — Gymnasium env that talks directly to norma_sim.
 
-Phase 1: sim-only, position control, no camera.
+Supports position control for joints/grippers and optional camera
+rendering (pass ``cameras=["top", "wrist.top"]`` to enable).
 
 Usage::
 
