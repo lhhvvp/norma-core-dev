@@ -11,6 +11,7 @@ application-layer helper, put it in `software/sim-server/tests/` instead.
 """
 from pathlib import Path
 
+import mujoco
 import pytest
 
 
@@ -21,3 +22,13 @@ def elrobot_mjcf_path() -> Path:
     if not p.exists():
         pytest.skip(f"ElRobot MJCF not found at {p}")
     return p
+
+
+@pytest.fixture
+def elrobot_sim(elrobot_mjcf_path):
+    """Fresh MjModel + MjData pair.  Function-scoped (default) so each
+    test gets clean state — no leakage between stress test and step
+    response."""
+    model = mujoco.MjModel.from_xml_path(str(elrobot_mjcf_path))
+    data = mujoco.MjData(model)
+    return model, data

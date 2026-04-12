@@ -1,4 +1,4 @@
-"""★ P0: pytest version of the Chunk 1 Task 1.7 MJCF demo.
+"""[P0] pytest version of the Chunk 1 Task 1.7 MJCF demo.
 
 This test is the canary for the whole capability-keyed gripper
 story. If the tendon-based equality in `gen.py` regresses (e.g.
