@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -41,6 +41,7 @@ class NormaSimRobotConfig:
     cameras: list[str] = field(default_factory=list)
     camera_size: int = 0  # 0 = default (480 for ipc, 224 for fast)
     backend: str = "fast"  # "fast" (in-process) or "ipc" (subprocess)
+    sim_to_real: Any = None  # SimToRealConfig or None (no degradation)
 
 
 class NormaSimRobot:
@@ -109,12 +110,19 @@ class NormaSimRobot:
         cam_size = self.config.camera_size or 224
         cameras = {name: (cam_size, cam_size) for name in self.config.cameras}
 
-        self._backend = FastSim(
+        backend = FastSim(
             manifest_path=self.config.manifest_path,
             cameras=cameras,
             physics_hz=self.config.physics_hz,
             action_hz=self.config.action_hz,
         )
+
+        # Wrap with sim-to-real adapter if configured
+        if self.config.sim_to_real is not None:
+            from .sim_to_real import SimToRealAdapter
+            backend = SimToRealAdapter(backend, self.config.sim_to_real)
+
+        self._backend = backend
         obs = self._backend.reset()
         self._cache_obs(obs)
 

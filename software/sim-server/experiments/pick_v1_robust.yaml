@@ -1,0 +1,37 @@
+robot:
+  manifest: hardware/elrobot/simulation/manifests/norma/therobotstudio_so101_tabletop.scene.yaml
+
+sim:
+  backend: fast
+  physics_hz: 500
+  action_hz: 30
+  gl_env:
+    DISPLAY: ":0"
+    GALLIUM_DRIVER: d3d12
+    MUJOCO_GL: glx
+  sim_to_real:
+    enabled: true
+    preset: mild  # "off", "mild", "aggressive", or "custom"
+
+cameras:
+  top: [224, 224]
+
+task:
+  name: pick_and_place
+  episodes: 200
+  action_noise: 0.02
+  seed: 0
+
+dataset:
+  repo_id: norma/sim_pick_v1_robust
+  root: datasets/norma_sim_pick_v1_robust
+  use_videos: true
+
+training:
+  policy: act
+  batch_size: 8
+  steps: 50000
+  save_freq: 10000
+  log_freq: 100
+  num_workers: 4
+  output_dir: outputs/act_pick_v1_robust

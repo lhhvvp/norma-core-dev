@@ -68,6 +68,39 @@ class RobotConfig:
 
 
 @dataclass
+class SimToRealSection:
+    """Sim-to-real degradation settings in experiment config."""
+    enabled: bool = False
+    preset: str = "mild"  # "off", "mild", "aggressive", or "custom"
+    # Custom overrides (only used if preset="custom")
+    joint_noise_std: float = 0.02
+    action_delay_steps: int = 1
+    calibration_offset_std: float = 0.05
+    camera_latency_frames: int = 1
+    image_noise_std: float = 5.0
+
+    def to_config(self):
+        """Convert to SimToRealConfig (or None if disabled)."""
+        if not self.enabled:
+            return None
+        from .sim_to_real import SimToRealConfig
+        if self.preset == "off":
+            return SimToRealConfig.off()
+        elif self.preset == "mild":
+            return SimToRealConfig.mild()
+        elif self.preset == "aggressive":
+            return SimToRealConfig.aggressive()
+        else:
+            return SimToRealConfig(
+                joint_noise_std=self.joint_noise_std,
+                action_delay_steps=self.action_delay_steps,
+                calibration_offset_std=self.calibration_offset_std,
+                camera_latency_frames=self.camera_latency_frames,
+                image_noise_std=self.image_noise_std,
+            )
+
+
+@dataclass
 class SimConfig:
     backend: str = "fast"  # "fast" (in-process MuJoCo) or "ipc" (subprocess, for real-time/mjviser)
     physics_hz: int = 500
@@ -77,6 +110,7 @@ class SimConfig:
         "GALLIUM_DRIVER": "d3d12",
         "MUJOCO_GL": "glx",
     })
+    sim_to_real: SimToRealSection = field(default_factory=SimToRealSection)
 
 
 @dataclass
@@ -125,9 +159,15 @@ class ExperimentConfig:
 
     @classmethod
     def _from_dict(cls, d: dict[str, Any]) -> "ExperimentConfig":
+        sim_raw = dict(d.get("sim", {}))
+        s2r_raw = sim_raw.pop("sim_to_real", {})
+        sim_config = SimConfig(
+            **sim_raw,
+            sim_to_real=SimToRealSection(**s2r_raw) if s2r_raw else SimToRealSection(),
+        )
         return cls(
             robot=RobotConfig(**d.get("robot", {})),
-            sim=SimConfig(**{k: v for k, v in d.get("sim", {}).items()}),
+            sim=sim_config,
             cameras=d.get("cameras", {"top": [224, 224]}),
             task=TaskConfig(**d.get("task", {})),
             dataset=DatasetConfig(**d.get("dataset", {})),

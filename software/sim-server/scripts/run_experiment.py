@@ -62,6 +62,7 @@ def phase_data(config):
         cameras=list(cam_configs.keys()),
         camera_size=cam_size,
         backend=config.sim.backend,
+        sim_to_real=config.sim.sim_to_real.to_config(),
     )
     robot = NormaSimRobot(robot_config)
     robot.connect()
