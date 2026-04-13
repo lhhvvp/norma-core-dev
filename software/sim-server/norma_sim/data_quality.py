@@ -222,7 +222,7 @@ def _validate_episode(
     states = []
     actions = []
     gripper_values = []
-    prev_img_hashes: dict[str, int] = {}
+    prev_img_means: dict[str, float] = {}
     frozen_streaks: dict[str, int] = {}
     max_frozen: dict[str, int] = {}
 
@@ -248,15 +248,18 @@ def _validate_episode(
         # Image check (if available)
         for key in frame:
             if "images" in key and hasattr(frame[key], 'numpy'):
-                img = frame[key].numpy()
-                img_hash = hash(img.tobytes()[:1000])
-                if img.mean() < 0.01:
+                img = frame[key].numpy().astype(np.float32)
+                img_mean = float(img.mean())
+
+                if img_mean < 0.01:
                     ep.warnings.append(f"Near-black image at frame {idx}: {key}")
-                if key in prev_img_hashes and img_hash == prev_img_hashes[key]:
+
+                # Frozen detection: compare full-image mean (cheap, robust)
+                if key in prev_img_means and abs(img_mean - prev_img_means[key]) < 1e-5:
                     frozen_streaks[key] = frozen_streaks.get(key, 0) + 1
                 else:
                     frozen_streaks[key] = 0
-                prev_img_hashes[key] = img_hash
+                prev_img_means[key] = img_mean
                 max_frozen[key] = max(max_frozen.get(key, 0), frozen_streaks[key])
 
     # Report max frozen streak per camera (only if excessive)
