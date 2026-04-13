@@ -157,6 +157,25 @@ def phase_data(config):
     return dataset_dir
 
 
+def phase_validate(config):
+    """Phase 1.5: Validate dataset quality before training."""
+    from norma_sim.data_quality import validate_dataset
+
+    print(f"\n=== Data Validation ===")
+    report = validate_dataset(
+        dataset_path=config.dataset.root,
+        repo_id=config.dataset.repo_id,
+    )
+    print(report)
+
+    if report.critical:
+        print("\n✗ Critical data quality failure — aborting pipeline.")
+        sys.exit(1)
+
+    if report.n_failed > 0:
+        print(f"\n⚠ {report.n_failed} episodes failed but within tolerance. Continuing.")
+
+
 def phase_train(config):
     """Phase 2: Launch LeRobot training."""
     tc = config.training
@@ -214,7 +233,7 @@ def phase_eval(config):
 def main():
     parser = argparse.ArgumentParser(description="Run experiment from YAML config")
     parser.add_argument("config", help="Path to experiment YAML")
-    parser.add_argument("--phase", choices=["data", "train", "eval", "all"], default="all")
+    parser.add_argument("--phase", choices=["data", "validate", "train", "eval", "all"], default="all")
     args = parser.parse_args()
 
     from norma_sim.experiment import ExperimentConfig
@@ -230,6 +249,9 @@ def main():
 
     if args.phase in ("data", "all"):
         phase_data(config)
+
+    if args.phase in ("data", "validate", "all"):
+        phase_validate(config)
 
     if args.phase in ("train", "all"):
         phase_train(config)
