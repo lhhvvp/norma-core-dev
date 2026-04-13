@@ -102,7 +102,8 @@ class QualityReport:
 def validate_dataset(
     dataset_path: str | Path,
     repo_id: str = "norma/sim_pick_v1",
-    max_episodes: int | None = None,
+    max_episodes: int | None = 20,  # sample, not full scan
+    max_frames_per_episode: int = 30,  # sample frames, not all
     joint_limit_margin: float = 0.5,
     min_gripper_range: float = 0.3,
     min_state_std: float = 0.005,
@@ -139,6 +140,7 @@ def validate_dataset(
             min_state_std=min_state_std,
             min_frames=min_frames,
             max_frames=max_frames,
+            max_sample_frames=max_frames_per_episode,
         )
         report.episodes.append(ep_report)
 
@@ -199,8 +201,9 @@ def _validate_episode(
     min_state_std: float,
     min_frames: int,
     max_frames: int,
+    max_sample_frames: int = 30,
 ) -> EpisodeReport:
-    """Validate a single episode."""
+    """Validate a single episode by sampling frames (not full scan)."""
     # Get episode frame indices
     all_ep_idx = ds.hf_dataset["episode_index"]
     indices = [i for i in range(len(all_ep_idx)) if all_ep_idx[i] == ep_idx]
@@ -217,6 +220,11 @@ def _validate_episode(
         ep.warnings.append(f"Short episode: {len(indices)} frames (min={min_frames})")
     if len(indices) > max_frames:
         ep.warnings.append(f"Long episode: {len(indices)} frames (max={max_frames})")
+
+    # Sample frames evenly (don't scan all — too slow for large datasets)
+    if max_sample_frames and len(indices) > max_sample_frames:
+        step = len(indices) // max_sample_frames
+        indices = indices[::step][:max_sample_frames]
 
     # Collect all state/action vectors
     states = []
