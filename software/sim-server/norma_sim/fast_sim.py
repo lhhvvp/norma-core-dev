@@ -25,7 +25,11 @@ import mujoco
 import numpy as np
 
 from .cameras import DEFAULT_CAMERAS
-from .world.capabilities import command_value_to_ctrl, qpos_to_position_value
+from .world.capabilities import (
+    command_value_to_ctrl,
+    gripper_command_to_ctrl,
+    gripper_qpos_to_normalized,
+)
 from .world.model import MuJoCoWorld
 
 
@@ -101,11 +105,14 @@ class FastSim:
                     float(joint_positions[i]), act
                 )
 
-        # Set gripper control: map [0,1] → ctrlrange (matching gym_env)
+        # Set gripper control via capabilities (single source of truth)
         for i, mj_idx in enumerate(self._gripper_indices):
-            g = float(np.clip(gripper_normalized, 0.0, 1.0))
-            lo, hi = self._gripper_ctrlrange[i]
-            self.data.ctrl[mj_idx] = g * (hi - lo) + lo
+            act = self._gripper_manifests[i]
+            self.data.ctrl[mj_idx] = gripper_command_to_ctrl(
+                float(np.clip(gripper_normalized, 0.0, 1.0)),
+                act,
+                self._gripper_ctrlrange[i],
+            )
 
         # Physics substeps
         for _ in range(self.substeps):
@@ -124,14 +131,15 @@ class FastSim:
         )
         obs["joints"] = joints
 
-        # Gripper position: map ctrlrange → [0,1] (matching gym_env)
+        # Gripper position via capabilities (single source of truth)
         if self._gripper_qposadr:
             grippers = np.zeros(len(self._gripper_qposadr), dtype=np.float64)
             for i, adr in enumerate(self._gripper_qposadr):
                 raw = float(self.data.qpos[adr])
-                lo, hi = self._gripper_ctrlrange[i]
-                rng = hi - lo
-                grippers[i] = (raw - lo) / rng if rng > 0 else 0.0
+                act = self._gripper_manifests[i]
+                grippers[i] = gripper_qpos_to_normalized(
+                    raw, act, self._gripper_ctrlrange[i],
+                )
             obs["gripper"] = grippers
         else:
             obs["gripper"] = np.array([0.0], dtype=np.float64)

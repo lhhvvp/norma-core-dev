@@ -48,6 +48,44 @@ def command_value_to_ctrl(command_value: float, actuator: "ActuatorManifest") ->
     raise ValueError(f"unsupported capability kind: {kind}")
 
 
+def gripper_command_to_ctrl(
+    normalized: float,
+    actuator: "ActuatorManifest",
+    ctrlrange: tuple[float, float],
+) -> float:
+    """Map gripper normalized [0,1] → MuJoCo ctrl value.
+
+    Handles both GRIPPER_PARALLEL (via manifest metadata) and
+    REVOLUTE_POSITION grippers (via ctrlrange linear interpolation).
+    This is the SINGLE source of truth for gripper control mapping.
+    """
+    kind = actuator.capability.kind
+    if kind == "GRIPPER_PARALLEL" and actuator.gripper is not None:
+        return command_value_to_ctrl(normalized, actuator)
+    # REVOLUTE_POSITION gripper: linear map [0,1] → ctrlrange
+    lo, hi = ctrlrange
+    return float(normalized) * (hi - lo) + lo
+
+
+def gripper_qpos_to_normalized(
+    qpos: float,
+    actuator: "ActuatorManifest",
+    ctrlrange: tuple[float, float],
+) -> float:
+    """Map gripper MuJoCo qpos → normalized [0,1].
+
+    Inverse of ``gripper_command_to_ctrl``. Handles both
+    GRIPPER_PARALLEL and REVOLUTE_POSITION grippers.
+    """
+    kind = actuator.capability.kind
+    if kind == "GRIPPER_PARALLEL" and actuator.gripper is not None:
+        return qpos_to_position_value(qpos, actuator)
+    # REVOLUTE_POSITION gripper: inverse linear map
+    lo, hi = ctrlrange
+    rng = hi - lo
+    return (float(qpos) - lo) / rng if rng > 0 else 0.0
+
+
 def qpos_to_position_value(qpos: float, actuator: "ActuatorManifest") -> float:
     """Inverse of ``command_value_to_ctrl``.
 
