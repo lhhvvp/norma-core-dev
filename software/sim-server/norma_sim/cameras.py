@@ -29,13 +29,20 @@ DEFAULT_CAMERAS = {
     "top": CameraConfig(
         name="top",
         width=640, height=480,
-        lookat=(0.0, 0.05, 0.1),
-        distance=0.6, azimuth=90.0, elevation=-60.0,
+        lookat=(0.0, 0.05, 0.05),
+        distance=0.75, azimuth=90.0, elevation=-75.0,
     ),
+    "front": CameraConfig(
+        name="front",
+        width=640, height=480,
+        lookat=(0.0, 0.05, 0.1),
+        distance=0.7, azimuth=180.0, elevation=-20.0,
+    ),
+    # Legacy alias
     "wrist.top": CameraConfig(
         name="wrist.top",
         width=640, height=480,
-        lookat=(0.0, 0.05, 0.15),
-        distance=0.4, azimuth=180.0, elevation=-45.0,
+        lookat=(0.0, 0.05, 0.1),
+        distance=0.7, azimuth=180.0, elevation=-20.0,
     ),
 }
