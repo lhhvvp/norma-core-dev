@@ -69,7 +69,7 @@ class RobotConfig:
 
 @dataclass
 class SimConfig:
-    backend: str = "cpu"
+    backend: str = "fast"  # "fast" (in-process MuJoCo) or "ipc" (subprocess, for real-time/mjviser)
     physics_hz: int = 500
     action_hz: int = 30
     gl_env: dict[str, str] = field(default_factory=lambda: {

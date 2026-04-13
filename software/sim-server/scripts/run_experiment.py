@@ -36,10 +36,9 @@ def interpolate(start: list[float], end: list[float], t: float) -> list[float]:
 
 
 def phase_data(config):
-    """Phase 1: Generate dataset using FastSim + Task + RobotSpec."""
-    from norma_sim.experiment import ExperimentConfig
-    from norma_sim.fast_sim import FastSim
+    """Phase 1: Generate dataset using NormaSimRobot + Task + RobotSpec."""
     from norma_sim.lerobot_helpers import RobotSpec
+    from norma_sim.lerobot_robot import NormaSimRobot, NormaSimRobotConfig
     from norma_sim.tasks import REGISTRY
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -52,18 +51,24 @@ def phase_data(config):
     for k, v in config.sim.gl_env.items():
         os.environ[k] = v
 
-    # ── Create sim ──
+    # ── Create robot (unified interface, backend from config) ──
     cam_configs = config.camera_configs
-    sim = FastSim(
+    cam_size = list(cam_configs.values())[0][0] if cam_configs else 224
+
+    robot_config = NormaSimRobotConfig(
         manifest_path=manifest,
-        cameras=cam_configs,
         physics_hz=config.sim.physics_hz,
         action_hz=config.sim.action_hz,
+        cameras=list(cam_configs.keys()),
+        camera_size=cam_size,
+        backend=config.sim.backend,
     )
+    robot = NormaSimRobot(robot_config)
+    robot.connect()
 
-    # ── RobotSpec from manifest (dynamic, no hardcoded names) ──
-    spec = RobotSpec.from_world(sim.world)
-    print(f"Robot: {spec.n_joints} joints, {spec.n_grippers} grippers")
+    # ── RobotSpec (dynamic joint names) ──
+    spec = RobotSpec.so101()  # TODO: derive from robot when multi-robot
+    print(f"Robot: backend={config.sim.backend}, cameras={list(cam_configs.keys())}")
     print(f"  motors: {spec.motor_names}")
 
     # ── Task from registry ──
@@ -96,10 +101,12 @@ def phase_data(config):
     print(f"\nGenerating {n_eps} episodes (noise={noise}, seed={seed})...\n")
     t0 = time.monotonic()
 
+    from norma_sim.lerobot_helpers import GRIPPER_LEROBOT_SCALE
+
     for ep in range(n_eps):
         rng = np.random.default_rng(seed=seed + ep)
         traj = task.generate_trajectory(rng)
-        sim.reset()
+        robot.reset()
 
         current_joints = list(traj.waypoints[0][1])
         current_gripper = traj.waypoints[0][2]
@@ -115,17 +122,29 @@ def phase_data(config):
                 gripper = start_gripper + (target_gripper - start_gripper) * t
                 noisy_joints = [j + rng.normal(0, noise) for j in joints]
 
-                obs = sim.step(np.array(noisy_joints), gripper)
+                # Send action via unified Robot interface (LeRobot format)
+                action = {}
+                for i, name in enumerate(spec.joint_names):
+                    action[f"{name}.pos"] = noisy_joints[i]
+                action[f"{spec.gripper_names[0]}.pos"] = gripper * GRIPPER_LEROBOT_SCALE
+
+                robot.send_action(action)
+                obs = robot.get_observation()
+
+                # State vector from LeRobot-format obs
+                state_vec = [obs[f"{n}.pos"] for n in spec.joint_names]
+                state_vec += [obs[f"{n}.pos"] for n in spec.gripper_names]
+                action_vec = list(noisy_joints) + [gripper * GRIPPER_LEROBOT_SCALE]
 
                 frame = {
-                    "observation.state": spec.build_state_vector(obs),
-                    "action": spec.build_action_vector(noisy_joints, gripper),
+                    "observation.state": np.array(state_vec, dtype=np.float32),
+                    "action": np.array(action_vec, dtype=np.float32),
                     "task": task.description,
                 }
                 for cam_name in cam_configs:
-                    cam_key = f"camera.{cam_name}"
-                    if cam_key in obs:
-                        frame[f"observation.images.{cam_name}"] = obs[cam_key]
+                    img_key = f"observation.images.{cam_name}"
+                    if img_key in obs:
+                        frame[img_key] = obs[img_key]
 
                 dataset.add_frame(frame)
                 frame_count += 1
@@ -146,7 +165,7 @@ def phase_data(config):
                 f"ETA {eta:.0f}s"
             )
 
-    sim.close()
+    robot.disconnect()
     elapsed_total = time.monotonic() - t0
 
     print(f"\n=== Data Generation Complete ===")

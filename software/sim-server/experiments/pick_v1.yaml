@@ -2,7 +2,7 @@ robot:
   manifest: hardware/elrobot/simulation/manifests/norma/therobotstudio_so101_tabletop.scene.yaml
 
 sim:
-  backend: cpu
+  backend: fast
   physics_hz: 500
   action_hz: 30
   gl_env:

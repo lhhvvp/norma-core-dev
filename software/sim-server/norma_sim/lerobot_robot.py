@@ -1,37 +1,33 @@
-"""LeRobot Robot adapter for NormaSimEnv.
+"""LeRobot Robot adapter — unified interface for sim and real.
 
-Implements LeRobot's ``Robot`` base class so that LeRobot's record,
-train, and eval scripts can use NormaCore's MuJoCo simulation with
-TheRobotStudio motor parameters directly.
+Implements LeRobot's ``Robot`` protocol with two backends:
+  - ``backend="fast"`` — in-process MuJoCo via FastSim (fast, for data gen + eval)
+  - ``backend="ipc"``  — subprocess IPC via NormaSimEnv (for real-time / mjviser)
 
-Usage with LeRobot scripts::
+Both backends produce identical LeRobot-format observations. Callers
+never need to know which backend is running.
 
-    from norma_sim.lerobot_robot import NormaSimRobot, NormaSimRobotConfig
+Usage::
 
     config = NormaSimRobotConfig(
         manifest_path="path/to/scene.yaml",
-        render_port=8012,  # optional mjviser
+        backend="fast",          # or "ipc"
+        cameras=["top"],
+        camera_size=224,
     )
     robot = NormaSimRobot(config)
     robot.connect()
-    obs = robot.get_observation()
-    sent = robot.send_action({"shoulder_pan.pos": 0.5, ...})
+    obs = robot.get_observation()   # {"shoulder_pan.pos": ..., "observation.images.top": ...}
+    robot.send_action({"shoulder_pan.pos": 0.5, "gripper.pos": 50.0})
     robot.disconnect()
-
-Or via LeRobot's factory::
-
-    robot = make_robot_from_config(config)
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-
-from .gym_env import NormaSimEnv
 
 
 @dataclass
@@ -43,43 +39,42 @@ class NormaSimRobotConfig:
     action_hz: int = 30
     render_port: int = 0
     cameras: list[str] = field(default_factory=list)
+    camera_size: int = 0  # 0 = default (480 for ipc, 224 for fast)
+    backend: str = "fast"  # "fast" (in-process) or "ipc" (subprocess)
 
 
 class NormaSimRobot:
-    """LeRobot-compatible Robot wrapping NormaSimEnv.
+    """LeRobot-compatible Robot with pluggable sim backend.
 
-    Bridges NormaCore's Gymnasium env to LeRobot's Robot protocol:
-    - ``get_observation()`` → flat dict ``{"shoulder_pan.pos": float, ...}``
-    - ``send_action(action)`` → calls ``env.step()``, caches new obs
-    - Feature names match LeRobot's SO-Follower convention for policy compatibility
+    The single entry point for all robot interaction — data generation,
+    policy evaluation, and real-time control all go through this class.
     """
 
     name = "norma_sim"
 
-    # Imported from shared helpers — single source of truth
     from .lerobot_helpers import JOINT_NAMES, GRIPPER_NAME
 
     def __init__(self, config: NormaSimRobotConfig) -> None:
         self.config = config
-        self._env: NormaSimEnv | None = None
+        self._backend: Any = None
         self._current_obs: dict[str, Any] = {}
         self._connected = False
+        self._backend_type = config.backend
 
     @cached_property
     def observation_features(self) -> dict:
-        """Flat dict of observation feature types (LeRobot contract)."""
         features: dict = {}
         for name in self.JOINT_NAMES:
             features[f"{name}.pos"] = float
         features[f"{self.GRIPPER_NAME}.pos"] = float
-        # Camera features: LeRobot expects "observation.images.<name>"
+        cam_h = self.config.camera_size or (224 if self._backend_type == "fast" else 480)
+        cam_w = cam_h  # square for fast, could be different for ipc
         for cam_name in self.config.cameras:
-            features[f"observation.images.{cam_name}"] = (480, 640, 3)
+            features[f"observation.images.{cam_name}"] = (cam_h, cam_w, 3)
         return features
 
     @cached_property
     def action_features(self) -> dict:
-        """Flat dict of action feature types (LeRobot contract)."""
         features: dict[str, type] = {}
         for name in self.JOINT_NAMES:
             features[f"{name}.pos"] = float
@@ -92,64 +87,95 @@ class NormaSimRobot:
 
     @property
     def is_calibrated(self) -> bool:
-        return True  # sim doesn't need calibration
+        return True
 
     def connect(self, calibrate: bool = True) -> None:
         if self._connected:
             return
-        self._env = NormaSimEnv(
+
+        if self._backend_type == "fast":
+            self._connect_fast()
+        elif self._backend_type == "ipc":
+            self._connect_ipc()
+        else:
+            raise ValueError(f"Unknown backend: {self._backend_type!r}")
+
+        self._connected = True
+
+    def _connect_fast(self) -> None:
+        """Connect using in-process FastSim (no subprocess)."""
+        from .fast_sim import FastSim
+
+        cam_size = self.config.camera_size or 224
+        cameras = {name: (cam_size, cam_size) for name in self.config.cameras}
+
+        self._backend = FastSim(
+            manifest_path=self.config.manifest_path,
+            cameras=cameras,
+            physics_hz=self.config.physics_hz,
+            action_hz=self.config.action_hz,
+        )
+        obs = self._backend.reset()
+        self._cache_obs(obs)
+
+    def _connect_ipc(self) -> None:
+        """Connect using subprocess IPC (for real-time / mjviser)."""
+        from .gym_env import NormaSimEnv
+
+        self._backend = NormaSimEnv(
             manifest_path=self.config.manifest_path,
             physics_hz=self.config.physics_hz,
             action_hz=self.config.action_hz,
             render_port=self.config.render_port,
             cameras=self.config.cameras if self.config.cameras else None,
         )
-        obs, info = self._env.reset()
+        obs, info = self._backend.reset()
         self._cache_obs(obs)
-        self._connected = True
 
     def calibrate(self) -> None:
-        pass  # sim doesn't need calibration
+        pass
 
     def configure(self) -> None:
-        pass  # sim doesn't need motor configuration
+        pass
 
     def reset(self, seed: int | None = None) -> dict[str, Any]:
-        """Reset simulation to initial state, return observation.
+        """Reset simulation, return observation in LeRobot format."""
+        assert self._backend is not None, "Robot not connected"
 
-        Useful between episodes in batch data generation or evaluation.
-        """
-        assert self._env is not None, "Robot not connected"
-        obs, info = self._env.reset(seed=seed)
+        if self._backend_type == "fast":
+            obs = self._backend.reset()
+        else:
+            obs, info = self._backend.reset(seed=seed)
+
         self._cache_obs(obs)
         return dict(self._current_obs)
 
     def get_observation(self) -> dict[str, Any]:
-        """Return current observation as flat dict (LeRobot contract)."""
-        return dict(self._current_obs)  # return copy
+        """Return current observation as LeRobot flat dict."""
+        return dict(self._current_obs)
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Send action to sim, step physics, cache new obs.
+        """Send LeRobot-format action, step physics, cache new obs."""
+        assert self._backend is not None, "Robot not connected"
+        from .lerobot_helpers import lerobot_action_to_sim
 
-        Args:
-            action: flat dict ``{"shoulder_pan.pos": float, ...}``
+        joints, gripper = lerobot_action_to_sim(action)
 
-        Returns:
-            The action actually applied (same as input for sim).
-        """
-        assert self._env is not None, "Robot not connected"
-        gym_action = self._action_to_gym(action)
-        obs, reward, terminated, truncated, info = self._env.step(gym_action)
+        if self._backend_type == "fast":
+            obs = self._backend.step(joints, gripper)
+        else:
+            gym_action = {"joints": joints, "gripper": np.array([gripper], dtype=np.float64)}
+            obs, reward, terminated, truncated, info = self._backend.step(gym_action)
+
         self._cache_obs(obs)
         return action
 
     def disconnect(self) -> None:
-        if self._env is not None:
-            self._env.close()
-            self._env = None
+        if self._backend is not None:
+            self._backend.close()
+            self._backend = None
         self._connected = False
 
-    # Context manager support
     def __enter__(self):
         self.connect()
         return self
@@ -157,15 +183,9 @@ class NormaSimRobot:
     def __exit__(self, *args):
         self.disconnect()
 
-    # ── Internal conversion ──
+    # ── Internal ──
 
-    def _cache_obs(self, gym_obs: dict[str, Any]) -> None:
-        """Convert NormaSimEnv obs dict → flat LeRobot obs dict."""
+    def _cache_obs(self, sim_obs: dict[str, Any]) -> None:
+        """Convert any backend's obs → LeRobot flat dict."""
         from .lerobot_helpers import sim_obs_to_lerobot
-        self._current_obs = sim_obs_to_lerobot(gym_obs)
-
-    def _action_to_gym(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Convert flat LeRobot action dict → NormaSimEnv action dict."""
-        from .lerobot_helpers import lerobot_action_to_sim
-        joints, gripper = lerobot_action_to_sim(action)
-        return {"joints": joints, "gripper": np.array([gripper], dtype=np.float64)}
+        self._current_obs = sim_obs_to_lerobot(sim_obs)
