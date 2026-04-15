@@ -30,6 +30,12 @@ class PickAndPlace:
         "action_noise_std": 0.02,
     })
 
+    # Success criterion (matches scene_tabletop.xml cube initial pose)
+    object_body_name: str = "cube"
+    object_initial_pos: tuple[float, float, float] = (0.20, 0.0, 0.025)
+    success_horizontal_displacement: float = 0.03  # metres — cube moved >3cm sideways
+    success_min_height: float = -0.05               # metres — cube not fallen below floor
+
     def generate_trajectory(self, rng: np.random.Generator) -> Trajectory:
         """Generate one randomized pick-and-place trajectory."""
         dr = self.domain_randomization
@@ -65,5 +71,36 @@ class PickAndPlace:
         )
 
     def check_success(self, obs: dict[str, Any]) -> bool | None:
-        """Cannot determine success without object pose tracking."""
-        return None
+        """Loose success check: cube has been relocated horizontally.
+
+        **This is an obs-only, stateless check.** It only inspects the
+        cube's final horizontal position relative to its MJCF-declared
+        initial pose. It cannot distinguish "actually picked up and
+        carried" from "nudged sideways without ever being lifted" ——
+        both score as success if the cube ended up >3 cm from start.
+
+        A stricter criterion (e.g., "cube was lifted above initial z
+        at some point during the episode") requires stateful tracking
+        across the episode and is out of scope for this stateless
+        protocol method. If you need that, track `peak_z` externally
+        during rollout and combine it with this return value.
+
+        Requires ``obs["object.<name>.pos"]`` to be present — callers
+        must enable tracked-object observation via
+        ``NormaSimRobotConfig.tracked_objects=[self.object_body_name]``
+        (or equivalent FastSim wiring). Returns ``None`` if the pose is
+        missing so the caller can distinguish "unknown" from "failed".
+        """
+        key = f"object.{self.object_body_name}.pos"
+        pos = obs.get(key)
+        if pos is None:
+            return None
+
+        pos = np.asarray(pos, dtype=np.float64)
+        initial = np.asarray(self.object_initial_pos, dtype=np.float64)
+
+        horizontal = float(np.linalg.norm(pos[:2] - initial[:2]))
+        moved_sideways = horizontal > self.success_horizontal_displacement
+        not_fallen = float(pos[2]) > self.success_min_height
+
+        return moved_sideways and not_fallen

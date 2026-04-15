@@ -42,6 +42,7 @@ class NormaSimRobotConfig:
     camera_size: int = 0  # 0 = default (480 for ipc, 224 for fast)
     backend: str = "fast"  # "fast" (in-process) or "ipc" (subprocess)
     sim_to_real: Any = None  # SimToRealConfig or None (no degradation)
+    tracked_objects: list[str] = field(default_factory=list)  # body names exposed via obs["object.<name>.pos"]
 
 
 class NormaSimRobot:
@@ -115,6 +116,7 @@ class NormaSimRobot:
             cameras=cameras,
             physics_hz=self.config.physics_hz,
             action_hz=self.config.action_hz,
+            tracked_objects=self.config.tracked_objects,
         )
 
         # Wrap with sim-to-real adapter if configured

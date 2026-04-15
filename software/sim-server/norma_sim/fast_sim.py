@@ -42,11 +42,22 @@ class FastSim:
         cameras: dict[str, tuple[int, int]] | None = None,
         physics_hz: int = 500,
         action_hz: int = 30,
+        tracked_objects: list[str] | None = None,
     ) -> None:
         self.world = MuJoCoWorld.from_manifest_path(manifest_path)
         self.model = self.world.model
         self.data = self.world.data
         self.substeps = physics_hz // action_hz
+
+        # ── Tracked object body IDs (for task success evaluation) ──
+        # Caller passes a list of MJCF body names (e.g., ["cube"]).
+        # Missing bodies are silently skipped so scenes without the
+        # object still work.
+        self._tracked_object_ids: dict[str, int] = {}
+        for name in (tracked_objects or []):
+            body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if body_id >= 0:
+                self._tracked_object_ids[name] = int(body_id)
 
         # ── Actuator mapping (from MuJoCoWorld — single source of truth) ──
         self._joint_manifests = list(self.world.joint_actuators)
@@ -143,6 +154,15 @@ class FastSim:
             obs["gripper"] = grippers
         else:
             obs["gripper"] = np.array([0.0], dtype=np.float64)
+
+        # Tracked object poses (for task success evaluation)
+        for name, body_id in self._tracked_object_ids.items():
+            obs[f"object.{name}.pos"] = np.array(
+                self.data.xpos[body_id], dtype=np.float64
+            ).copy()
+            obs[f"object.{name}.quat"] = np.array(
+                self.data.xquat[body_id], dtype=np.float64
+            ).copy()
 
         # Cameras
         for cam_name, renderer in self._renderers.items():

@@ -98,6 +98,8 @@ class RobotSpec:
             if key.startswith("camera.") and isinstance(val, np.ndarray):
                 cam_name = key[len("camera."):]
                 obs[f"observation.images.{cam_name}"] = val
+            elif key.startswith("object.") and isinstance(val, np.ndarray):
+                obs[key] = val
         return obs
 
     def lerobot_action_to_sim(

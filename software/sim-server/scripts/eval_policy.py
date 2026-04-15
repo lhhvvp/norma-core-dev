@@ -89,10 +89,19 @@ def run_episode(
     max_steps: int,
     realtime: bool,
     action_hz: int,
+    object_key: str | None = None,
 ) -> dict:
-    """Run one evaluation episode, return action/state trajectories."""
+    """Run one evaluation episode, return action/state trajectories.
+
+    If ``object_key`` (e.g. ``"object.cube.pos"``) is provided, also
+    track the peak z-height of that object across the episode so the
+    caller can compute a strict "was actually lifted" success metric.
+    """
     actions = []
     states = []
+    final_obs: dict = {}
+    initial_z: float | None = None
+    peak_z: float | None = None
 
     for step_i in range(max_steps):
         obs = robot.get_observation()
@@ -114,23 +123,86 @@ def run_episode(
         state_vec = [obs[f"{n}.pos"] for n in JOINT_NAMES] + [obs["gripper.pos"]]
         states.append(np.array(state_vec, dtype=np.float32))
 
+        if object_key and object_key in obs:
+            z = float(obs[object_key][2])
+            if initial_z is None:
+                initial_z = z
+                peak_z = z
+            else:
+                peak_z = max(peak_z, z) if peak_z is not None else z
+
         if realtime:
             time.sleep(1.0 / action_hz)
+
+    # Grab one more obs after the last send_action so the success check
+    # sees the fully-settled final state.
+    final_obs = robot.get_observation()
 
     return {
         "actions": np.array(actions),
         "states": np.array(states),
+        "final_obs": final_obs,
+        "initial_object_z": initial_z,
+        "peak_object_z": peak_z,
     }
 
 
 def print_summary(results: list[dict], episodes: int):
-    """Print action/state statistics across all episodes."""
+    """Print action/state statistics + task success rate across all episodes."""
     all_actions = np.concatenate([r["actions"] for r in results])
     all_states = np.concatenate([r["states"] for r in results])
 
     print(f"\n{'=' * 60}")
     print(f"Evaluation Summary ({episodes} episodes, {len(all_actions)} total steps)")
     print(f"{'=' * 60}")
+
+    # Task success rate — two metrics:
+    #   1. Loose: task.check_success() — horizontal displacement only
+    #   2. Strict: horizontal displacement AND cube was actually lifted
+    #      above initial z at some point (requires peak_z tracking)
+    outcomes = [r.get("success") for r in results]
+    determinable = [o for o in outcomes if o is not None]
+    print(f"\nTask success:")
+    if determinable:
+        loose_hits = sum(1 for o in determinable if o)
+        loose_rate = loose_hits / len(determinable)
+        undetermined = len(outcomes) - len(determinable)
+        print(f"  loose  (horizontal displacement only):  "
+              f"{loose_rate:.1%}  ({loose_hits}/{len(determinable)})")
+
+        # Strict: AND cube was lifted above initial z
+        strict_determinable = [
+            r for r in results
+            if r.get("success") is not None
+            and r.get("peak_object_z") is not None
+            and r.get("initial_object_z") is not None
+        ]
+        if strict_determinable:
+            lift_threshold = 0.005  # cube must rise >5mm above start
+            strict_hits = sum(
+                1 for r in strict_determinable
+                if r["success"] is True
+                and (r["peak_object_z"] - r["initial_object_z"]) > lift_threshold
+            )
+            strict_rate = strict_hits / len(strict_determinable)
+            avg_lift = np.mean([
+                r["peak_object_z"] - r["initial_object_z"]
+                for r in strict_determinable
+            ])
+            max_lift = max(
+                r["peak_object_z"] - r["initial_object_z"]
+                for r in strict_determinable
+            )
+            print(f"  strict (also lifted >{lift_threshold * 1000:.0f}mm above start):  "
+                  f"{strict_rate:.1%}  ({strict_hits}/{len(strict_determinable)})")
+            print(f"  peak lift stats: mean={avg_lift * 1000:+.1f}mm  max={max_lift * 1000:+.1f}mm")
+            if strict_hits == 0 and loose_hits > 0:
+                print(f"  WARNING: loose-success episodes never lifted the object — "
+                      f"arm is pushing, not picking")
+        if undetermined:
+            print(f"  undetermined:  {undetermined}  (missing object pose in obs)")
+    else:
+        print(f"  UNKNOWN (task.check_success returned None for all episodes)")
 
     print(f"\nAction statistics:")
     print(f"  {'joint':15s}  {'mean':>8s}  {'std':>7s}  {'min':>8s}  {'max':>8s}")
@@ -190,7 +262,13 @@ def main():
     cam_names = [k.replace("observation.images.", "") for k, _ in image_keys]
     print(f"  cameras needed: {cam_names if cam_names else '(none)'}")
 
-    # ── 2. Create robot ──
+    # ── 2. Instantiate task (defines success criterion + tracked objects) ──
+    from norma_sim.tasks.pick_and_place import PickAndPlace
+    task = PickAndPlace()
+    tracked = [task.object_body_name]
+    print(f"Task: {task.name!r} — tracking object body: {tracked}")
+
+    # ── 3. Create robot ──
     from norma_sim.lerobot_robot import NormaSimRobot, NormaSimRobotConfig
 
     robot_config = NormaSimRobotConfig(
@@ -199,6 +277,7 @@ def main():
         action_hz=30,
         render_port=args.render_port,
         cameras=cam_names,
+        tracked_objects=tracked,
     )
     robot = NormaSimRobot(robot_config)
     robot.connect()
@@ -207,7 +286,8 @@ def main():
     if args.render_port:
         print(f"\n  Open http://localhost:{args.render_port} to watch\n")
 
-    # ── 3. Run evaluation episodes ──
+    # ── 4. Run evaluation episodes ──
+    object_key = f"object.{task.object_body_name}.pos"
     results = []
     for ep in range(args.episodes):
         robot.reset()
@@ -216,20 +296,27 @@ def main():
         result = run_episode(
             robot, policy, image_keys, device,
             args.max_steps, realtime, robot_config.action_hz,
+            object_key=object_key,
         )
         elapsed = time.monotonic() - t0
+
+        # Score the episode via task.check_success (returns True/False/None)
+        result["success"] = task.check_success(result["final_obs"])
         results.append(result)
 
         # Per-episode quick summary
         act = result["actions"]
+        outcome = result["success"]
+        outcome_str = "[ok]  success " if outcome is True else "[fail]        " if outcome is False else "[?]   unknown "
         print(
             f"  Episode {ep + 1:3d}/{args.episodes} | "
             f"{len(act)} steps | "
             f"{elapsed:.1f}s | "
+            f"{outcome_str} | "
             f"action_mean={act.mean():+.3f} action_std={act.std():.3f}"
         )
 
-    # ── 4. Summary ──
+    # ── 5. Summary ──
     print_summary(results, args.episodes)
 
     robot.disconnect()
