@@ -34,6 +34,7 @@ experiments/<实验名>/
 |------|------|---------|------|
 | mjviser | Web MuJoCo 可视化 | mjviser-ref/ | Phase 1 |
 | robot-control-stack | Sim-Real 统一控制接口 | rcs-ref/ | Phase 1 |
+| bimo | Sim-to-Real 方法论与域随机化 recipe | bimo-ref/ | Phase 1 |
 
 ## 与主系统的关系
 
